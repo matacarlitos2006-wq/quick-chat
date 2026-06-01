@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, googleProvider, db } from './firebase'; 
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, updateDoc, deleteDoc } from 'firebase/firestore';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -16,7 +16,10 @@ function App() {
   const [myBio, setMyBio] = useState('');
   const [isEditingBio, setIsEditingBio] = useState(false);
 
-  // NEW: Dark Mode State (Saves your choice in the browser)
+  // Track which message ID is currently being hovered over
+  const [hoveredMessageId, setHoveredMessageId] = useState(null);
+
+  // Dark Mode State
   const [darkMode, setDarkMode] = useState(() => {
     const savedTheme = localStorage.getItem('chat_theme');
     return savedTheme === 'dark';
@@ -24,7 +27,6 @@ function App() {
 
   const chatEndRef = useRef(null);
 
-  // Toggle Theme Function
   const toggleDarkMode = () => {
     setDarkMode((prev) => {
       const nextMode = !prev;
@@ -100,7 +102,7 @@ function App() {
     return () => unsubscribe();
   }, [searchQuery, user]);
 
-  // 4. Live Message Stream
+  // 4. Live Message Stream Channel
   useEffect(() => {
     if (!user || !activeChatUser) {
       setMessages([]);
@@ -163,7 +165,19 @@ function App() {
     setNewMessage('');
   };
 
-  // Dynamic Theme Palette Generator
+  // NEW: Unsend / Delete Message Trigger Function
+  const handleUnsendMessage = async (messageId) => {
+    const confirmUnsend = window.confirm("Are you sure you want to unsend this message?");
+    if (!confirmUnsend) return;
+
+    try {
+      await deleteDoc(doc(db, 'messages', messageId));
+    } catch (err) {
+      console.error("Error deleting document from cloud: ", err);
+    }
+  };
+
+  // Theme Palette
   const theme = {
     bgOuter: darkMode ? '#18191a' : '#f0f2f5',
     bgContainer: darkMode ? '#242526' : '#ffffff',
@@ -175,7 +189,8 @@ function App() {
     textMain: darkMode ? '#e4e6eb' : '#333333',
     textSub: darkMode ? '#b0b3b8' : '#666666',
     border: darkMode ? '#3a3b3c' : '#e0e0e0',
-    rowHoverActive: darkMode ? '#2f3031' : '#e3f2fd'
+    rowHoverActive: darkMode ? '#2f3031' : '#e3f2fd',
+    unsendBtnColor: darkMode ? '#ff4d4d' : '#e74c3c'
   };
 
   if (!user) {
@@ -194,9 +209,8 @@ function App() {
     <div style={{ ...styles.desktopWrapper, backgroundColor: theme.bgOuter }}>
       <div style={{ ...styles.desktopAppContainer, backgroundColor: theme.bgContainer, boxShadow: darkMode ? '0 0 20px rgba(0,0,0,0.4)' : '0 0 20px rgba(0,0,0,0.05)' }}>
         
-        {/* SIDEBAR PANEL */}
+        {/* SIDEBAR */}
         <div style={{ ...styles.sidebar, backgroundColor: theme.bgSidebar, borderRight: `1px solid ${theme.border}` }}>
-          
           <div style={{ ...styles.myProfileHeaderContainer, backgroundColor: theme.bgContainer, borderBottom: `1px solid ${theme.border}` }}>
             <div style={styles.myProfileHeader}>
               <img src={user.photoURL} alt="" style={styles.avatar} />
@@ -204,12 +218,7 @@ function App() {
                 <div style={{ fontWeight: 'bold', fontSize: '14px', color: theme.textMain }}>{user.displayName}</div>
                 <div style={{ fontSize: '11px', color: '#2ecc71', fontWeight: 'bold' }}>Online 🟢</div>
               </div>
-              
-              {/* NEW: Theme Selector Toggle Button */}
-              <button onClick={toggleDarkMode} style={styles.themeToggleBtn}>
-                {darkMode ? '☀️' : '🌙'}
-              </button>
-              
+              <button onClick={toggleDarkMode} style={styles.themeToggleBtn}>{darkMode ? '☀️' : '🌙'}</button>
               <button onClick={handleLogout} style={styles.smallLogoutBtn}>Exit</button>
             </div>
             
@@ -282,7 +291,7 @@ function App() {
           </div>
         </div>
 
-        {/* MESSAGING STREAM PANEL */}
+        {/* CHAT WINDOW */}
         <div style={{ ...styles.chatWindow, backgroundColor: theme.bgContainer }}>
           {activeChatUser ? (
             <>
@@ -298,7 +307,23 @@ function App() {
                 {messages.map((msg) => {
                   const isMe = msg.senderId === user.uid;
                   return (
-                    <div key={msg.id} style={{ ...styles.messageRow, justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+                    <div 
+                      key={msg.id} 
+                      style={{ ...styles.messageRow, justifyContent: isMe ? 'flex-end' : 'flex-start' }}
+                      onMouseEnter={() => setHoveredMessageId(msg.id)}
+                      onMouseLeave={() => setHoveredMessageId(null)}
+                    >
+                      {/* NEW: Display the Unsend button on the left side of your message bubble when hovered */}
+                      {isMe && hoveredMessageId === msg.id && (
+                        <button 
+                          onClick={() => handleUnsendMessage(msg.id)}
+                          style={{ ...styles.unsendActionBtn, color: theme.unsendBtnColor }}
+                          title="Unsend message"
+                        >
+                          Unsend 🗑️
+                        </button>
+                      )}
+
                       <div style={{
                         ...styles.msgBubble,
                         backgroundColor: isMe ? theme.bgBubbleMe : theme.bgBubbleThem,
@@ -347,10 +372,7 @@ const styles = {
   myProfileHeader: { display: 'flex', alignItems: 'center', padding: '15px 15px 5px 15px' },
   profileText: { marginLeft: '10px', flex: 1 },
   avatar: { width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' },
-  
-  // Custom button styling for the theme selection toggle
   themeToggleBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '10px', padding: '4px', userSelect: 'none' },
-  
   smallLogoutBtn: { padding: '6px 12px', backgroundColor: '#f44336', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   bioWidgetWrapper: { padding: '0px 15px 12px 15px' },
   bioStatusTextDisplay: { fontSize: '13px', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' },
@@ -367,7 +389,11 @@ const styles = {
   chatWindow: { flex: 1, display: 'flex', flexDirection: 'column', height: '100%' },
   chatWindowHeader: { display: 'flex', alignItems: 'center', padding: '15px 20px' },
   messageStream: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' },
-  messageRow: { display: 'flex', width: '100%' },
+  
+  // Adjusted alignment configuration to neatly float actions next to message flows
+  messageRow: { display: 'flex', width: '100%', alignItems: 'center', position: 'relative', gap: '10px' },
+  unsendActionBtn: { border: 'none', background: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: '600', padding: '4px 8px', borderRadius: '4px', transition: 'opacity 0.2s' },
+  
   msgBubble: { padding: '12px 16px', borderRadius: '18px', maxWidth: '60%', fontSize: '15px', lineHeight: '1.4', boxSizing: 'border-box' },
   messageInputForm: { display: 'flex', padding: '15px 20px', alignItems: 'center' },
   desktopInputField: { flex: 1, padding: '14px 18px', borderRadius: '24px', outline: 'none', fontSize: '15px' },
