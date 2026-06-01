@@ -6,6 +6,10 @@ import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, upd
 // DEVELOPER DEFINITION
 const DEVELOPER_EMAIL = "matacarlitos2006@gmail.com";
 
+// High-quality, lightweight UI sound effect URLs
+const SOUND_SEND = "https://assets.mixkit.co/active_storage/sfx/2357/2357-84.wav"; // Soft digital pop
+const SOUND_RECEIVE = "https://assets.mixkit.co/active_storage/sfx/2568/2568-84.wav"; // Crisp chime ring
+
 // Custom TikTok-style Cyan Verification Badge Component
 const TikTokBadge = () => (
   <svg 
@@ -36,8 +40,9 @@ function App() {
   const [myBio, setMyBio] = useState('');
   const [isEditingBio, setIsEditingBio] = useState(false);
 
-  // Message Actions
+  // Message Action states
   const [hoveredMessageId, setHoveredMessageId] = useState(null);
+  const [activeReactionMenuId, setActiveReactionMenuId] = useState(null);
 
   // Inside-Chat Message Stream Filtering Search State
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
@@ -61,7 +66,8 @@ function App() {
   });
 
   const chatEndRef = useRef(null);
-  const idleTimerRef = useRef(null); // Ref to track the 10-minute away timeout pointer
+  const idleTimerRef = useRef(null); 
+  const prevMessagesCountRef = useRef(0); // Tracks message lengths to prevent sound loops on initial load
 
   const toggleDarkMode = () => {
     setDarkMode((prev) => {
@@ -84,18 +90,26 @@ function App() {
     }
   };
 
-  // NEW: Presence System (Online / Away / Offline tracking)
+  // Helper to detect if a message text string is an image or GIF URL link
+  const isImageURL = (url) => {
+    if (!url.startsWith('http://') && !url.startsWith('https://')) return false;
+    // Cleans up query strings from URLs (like unspash variables) to accurately test extensions
+    const cleanUrl = url.split('?')[0].toLowerCase();
+    return cleanUrl.endsWith('.jpg') || 
+           cleanUrl.endsWith('.jpeg') || 
+           cleanUrl.endsWith('.png') || 
+           cleanUrl.endsWith('.gif') || 
+           cleanUrl.endsWith('.webp');
+  };
+
+  // Presence System (Online / Away / Offline tracking)
   useEffect(() => {
     if (!user) return;
 
-    // 1. Mark user as Online immediately upon logging into the site
     updateUserPresence('online');
 
-    // 2. Timer function that triggers after 10 minutes of complete idleness
     const resetIdleTimer = () => {
-      // If they were away, moving mouse brings them back online instantly
       updateUserPresence('online');
-
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       
       // 10 minutes = 600,000 milliseconds
@@ -104,16 +118,13 @@ function App() {
       }, 600000);
     };
 
-    // Listen for user interactions anywhere on the screen
     window.addEventListener('mousemove', resetIdleTimer);
     window.addEventListener('keydown', resetIdleTimer);
     window.addEventListener('click', resetIdleTimer);
 
-    resetIdleTimer(); // Initial running trigger
+    resetIdleTimer(); 
 
-    // 3. Mark user as offline if they manually close the app or log out
     const handleBeforeUnload = () => {
-      // This runs right as the browser starts tearing down the tab layout
       updateUserPresence('offline');
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -126,6 +137,28 @@ function App() {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [user]);
+
+  // Sound Effects Triggers Engine
+  useEffect(() => {
+    // Prevent sounds from firing when first loading into an empty chat or changing rooms
+    if (messages.length === 0) {
+      prevMessagesCountRef.current = 0;
+      return;
+    }
+
+    if (prevMessagesCountRef.current > 0 && messages.length > prevMessagesCountRef.current) {
+      const lastMessage = messages[messages.length - 1];
+      
+      // Trigger appropriate sound based on sender identity
+      if (lastMessage.senderId === user?.uid) {
+        new Audio(SOUND_SEND).play().catch(e => console.log("Sound play blocked by browser config"));
+      } else {
+        new Audio(SOUND_RECEIVE).play().catch(e => console.log("Sound play blocked by browser config"));
+      }
+    }
+
+    prevMessagesCountRef.current = messages.length;
+  }, [messages, user]);
 
   // 1. Auth Listener + Sync Profile Info
   useEffect(() => {
@@ -178,7 +211,7 @@ function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // 3. Load Recent Private DMs (Tracks dynamic status bubble indicators)
+  // 3. Load Recent Private DMs
   useEffect(() => {
     if (user) {
       const savedChats = localStorage.getItem(`recents_${user.uid}`);
@@ -246,7 +279,6 @@ function App() {
     });
 
     if (!isChannel) {
-      // Refetch latest user presence values when opening direct messenger panel links
       const userRef = doc(db, 'users', activeChat.uid);
       const unsubUserPresence = onSnapshot(userRef, (snapshot) => {
         if (snapshot.exists()) {
@@ -336,7 +368,8 @@ function App() {
       senderId: user.uid,
       senderName: savedLocalName,
       senderEmail: user.email, 
-      photoURL: savedAvatarURL 
+      photoURL: savedAvatarURL,
+      reactions: {} // Initialize an empty reactions matrix block for cloud records
     });
     setNewMessage('');
   };
@@ -345,9 +378,37 @@ function App() {
     const confirmUnsend = window.confirm("Are you sure you want to unsend this message?");
     if (!confirmUnsend) return;
     try {
-      await deleteDoc(doc(db, 'messages', messageId));
+      await deleteDoc(doc(doc(db, 'messages', messageId)));
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // Toggle emoji reactions state records inside cloud Firestore nodes
+  const handleToggleReaction = async (messageId, currentReactions = {}, emoji) => {
+    if (!user) return;
+    
+    const updatedReactions = { ...currentReactions };
+    const currentEmojiUsersList = updatedReactions[emoji] || [];
+
+    if (currentEmojiUsersList.includes(user.uid)) {
+      // User already clicked it -> Remove their reaction stamp
+      updatedReactions[emoji] = currentEmojiUsersList.filter(id => id !== user.uid);
+    } else {
+      // Add user reaction stamp
+      updatedReactions[emoji] = [...currentEmojiUsersList, user.uid];
+    }
+
+    // Clean up empty reaction lists to save cloud storage space
+    if (updatedReactions[emoji].length === 0) {
+      delete updatedReactions[emoji];
+    }
+
+    try {
+      await updateDoc(doc(db, 'messages', messageId), { reactions: updatedReactions });
+      setActiveReactionMenuId(null); // Close popover menu panel
+    } catch (err) {
+      console.error("Failed to append reaction state:", err);
     }
   };
 
@@ -355,9 +416,8 @@ function App() {
     msg.text.toLowerCase().includes(messageSearchQuery.toLowerCase())
   );
 
-  // Helper component to render color status bulbs based on string matches
   const StatusIndicator = ({ presenceState }) => {
-    let color = '#9e9e9e'; // Default Offline Grey
+    let color = '#9e9e9e'; 
     let text = 'Offline';
     if (presenceState === 'online') { color = '#2ecc71'; text = 'Online'; }
     if (presenceState === 'away') { color = '#f1c40f'; text = 'Away'; }
@@ -413,7 +473,6 @@ function App() {
                   {savedLocalName}
                   {user.email === DEVELOPER_EMAIL && <TikTokBadge />}
                 </div>
-                {/* Always show online state for owner loop layout */}
                 <StatusIndicator presenceState="online" />
               </div>
               <button onClick={toggleDarkMode} style={styles.themeToggleBtn}>{darkMode ? '☀️' : '🌙'}</button>
@@ -510,7 +569,6 @@ function App() {
                         <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
                         {u.email === DEVELOPER_EMAIL && <TikTokBadge />}
                       </div>
-                      {/* Live status indicators inside row rendering blocks */}
                       <StatusIndicator presenceState={u.presence} />
                     </div>
                   </div>
@@ -556,7 +614,6 @@ function App() {
                   </div>
                 </div>
 
-                {/* Inside-Chat Stream Filter Text Box */}
                 <div style={styles.msgSearchContainer}>
                   <input 
                     type="text"
@@ -576,27 +633,59 @@ function App() {
                 {filteredMessages.length > 0 ? (
                   filteredMessages.map((msg) => {
                     const isMe = msg.senderId === user.uid;
+                    const containsMedia = isImageURL(msg.text);
+
                     return (
                       <div 
                         key={msg.id} 
                         style={{ ...styles.messageRow, justifyContent: isMe ? 'flex-end' : 'flex-start' }}
                         onMouseEnter={() => setHoveredMessageId(msg.id)}
-                        onMouseLeave={() => setHoveredMessageId(null)}
+                        onMouseLeave={() => {
+                          setHoveredMessageId(null);
+                          setActiveReactionMenuId(null);
+                        }}
                       >
-                        {isMe && hoveredMessageId === msg.id && (
-                          <button 
-                            onClick={() => handleUnsendMessage(msg.id)}
-                            style={{ ...styles.unsendActionBtn, color: theme.unsendBtnColor }}
-                          >
-                            Unsend 🗑️
-                          </button>
+                        {/* Hover triggers action button layout */}
+                        {hoveredMessageId === msg.id && (
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', order: isMe ? 0 : 3 }}>
+                            <button 
+                              onClick={() => setActiveReactionMenuId(activeReactionMenuId === msg.id ? null : msg.id)}
+                              style={styles.reactionTriggerBtn}
+                              title="React to message"
+                            >
+                              😊
+                            </button>
+                            {isMe && (
+                              <button 
+                                onClick={() => handleUnsendMessage(msg.id)}
+                                style={{ ...styles.unsendActionBtn, color: theme.unsendBtnColor }}
+                              >
+                                Unsend 🗑️
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Hover popup reaction picker bar */}
+                        {activeReactionMenuId === msg.id && (
+                          <div style={{ ...styles.emojiPickerPopover, backgroundColor: theme.bgContainer, border: `1px solid ${theme.border}` }}>
+                            {['❤️', '😂', '👍', '😮', '😢'].map(emoji => (
+                              <span 
+                                key={emoji} 
+                                onClick={() => handleToggleReaction(msg.id, msg.reactions, emoji)}
+                                style={styles.popoverEmojiItem}
+                              >
+                                {emoji}
+                              </span>
+                            ))}
+                          </div>
                         )}
 
                         {!isMe && (
-                          <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 0 }} />
+                          <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 1 }} />
                         )}
 
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '60%' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '60%', order: 2, position: 'relative' }}>
                           {!isMe && (
                             <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px', display: 'flex', alignItems: 'center', gap: '2px' }}>
                               {msg.senderName}
@@ -611,18 +700,54 @@ function App() {
                             </span>
                           )}
 
-                          <div style={{
-                            ...styles.msgBubble,
-                            backgroundColor: isMe ? theme.bgBubbleMe : theme.bgBubbleThem,
-                            color: isMe ? '#ffffff' : theme.textMain,
-                            maxWidth: '100%'
-                          }}>
-                            {msg.text}
-                          </div>
+                          {/* Dynamic image checking block */}
+                          {containsMedia ? (
+                            <a href={msg.text} target="_blank" rel="noopener noreferrer">
+                              <img 
+                                src={msg.text} 
+                                alt="Shared attachment link" 
+                                style={{ ...styles.renderedMediaMessage, border: `2px solid ${isMe ? theme.bgBubbleMe : theme.border}` }} 
+                              />
+                            </a>
+                          ) : (
+                            <div style={{
+                              ...styles.msgBubble,
+                              backgroundColor: isMe ? theme.bgBubbleMe : theme.bgBubbleThem,
+                              color: isMe ? '#ffffff' : theme.textMain,
+                              maxWidth: '100%'
+                            }}>
+                              {msg.text}
+                            </div>
+                          )}
+
+                          {/* Render stamp array indicators directly underneath standard text boxes */}
+                          {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                            <div style={{ ...styles.renderedReactionsContainer, justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+                              {Object.entries(msg.reactions).map(([emoji, users]) => {
+                                const userReacted = users.includes(user.uid);
+                                return (
+                                  <div 
+                                    key={emoji}
+                                    onClick={() => handleToggleReaction(msg.id, msg.reactions, emoji)}
+                                    style={{
+                                      ...styles.reactionPillBadge,
+                                      backgroundColor: userReacted ? 'rgba(0, 132, 255, 0.15)' : theme.bgInput,
+                                      border: userReacted ? '1px solid #0084ff' : `1px solid ${theme.border}`,
+                                      color: theme.textMain
+                                    }}
+                                  >
+                                    <span>{emoji}</span>
+                                    <span style={{ fontSize: '10px', fontWeight: 'bold' }}>{users.length}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
                         </div>
                         
                         {isMe && (
-                          <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 2 }} />
+                          <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 4 }} />
                         )}
                       </div>
                     );
@@ -638,7 +763,7 @@ function App() {
               <form onSubmit={handleSendMessage} style={{ ...styles.messageInputForm, backgroundColor: theme.bgHeader, borderTop: `1px solid ${theme.border}` }}>
                 <input
                   type="text"
-                  placeholder={activeChat.isChannel ? `Message ${activeChat.name}...` : `Message ${activeChat.displayName}...`}
+                  placeholder={activeChat.isChannel ? `Message ${activeChat.name}... (paste image/gif URL to share media)` : `Message ${activeChat.displayName}... (paste link to share media)`}
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                   style={{ ...styles.desktopInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
@@ -752,16 +877,21 @@ const styles = {
   userRow: { display: 'flex', alignItems: 'center', padding: '12px 15px', cursor: 'pointer', transition: 'background 0.2s' },
   userRowTextGroup: { display: 'flex', flexDirection: 'column', marginLeft: '12px', flex: 1, overflow: 'hidden' },
   userRowName: { fontWeight: '500' },
-  userRowBioPreview: { fontSize: '12px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' },
   chatWindow: { flex: 1, display: 'flex', flexDirection: 'column', height: '100%' },
   chatWindowHeader: { display: 'flex', alignItems: 'center', padding: '15px 20px', position: 'relative' },
   msgSearchContainer: { position: 'relative', display: 'flex', alignItems: 'center' },
   msgHeaderSearchField: { padding: '8px 30px 8px 12px', borderRadius: '18px', width: '200px', outline: 'none', fontSize: '13px', transition: 'width 0.3s' },
   clearSearchXBtn: { position: 'absolute', right: '10px', border: 'none', background: 'none', color: '#aaa', cursor: 'pointer', fontSize: '11px' },
-  messageStream: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' },
+  messageStream: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' },
   messageRow: { display: 'flex', width: '100%', alignItems: 'center', position: 'relative', gap: '10px' },
+  reactionTriggerBtn: { border: 'none', background: 'none', fontSize: '14px', cursor: 'pointer', padding: '4px' },
   unsendActionBtn: { border: 'none', background: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: '600', padding: '4px 8px', borderRadius: '4px' },
-  msgBubble: { padding: '12px 16px', borderRadius: '18px', maxWidth: '60%', fontSize: '15px', lineHeight: '1.4', boxSizing: 'border-box' },
+  msgBubble: { padding: '12px 16px', borderRadius: '18px', maxWidth: '100%', fontSize: '15px', lineHeight: '1.4', boxSizing: 'border-box' },
+  renderedMediaMessage: { maxWidth: '100%', maxHeight: '250px', borderRadius: '12px', display: 'block', objectFit: 'cover', marginTop: '2px', cursor: 'pointer' },
+  emojiPickerPopover: { position: 'absolute', display: 'flex', gap: '8px', padding: '6px 10px', borderRadius: '20px', top: '-35px', left: '50%', transform: 'translateX(-50%)', zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' },
+  popoverEmojiItem: { cursor: 'pointer', fontSize: '16px', transition: 'transform 0.1s', ":hover": { transform: 'scale(1.2)' } },
+  renderedReactionsContainer: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px', width: '100%' },
+  reactionPillBadge: { display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 6px', borderRadius: '10px', cursor: 'pointer', fontSize: '12px', userSelect: 'none' },
   messageInputForm: { display: 'flex', padding: '15px 20px', alignItems: 'center' },
   desktopInputField: { flex: 1, padding: '14px 18px', borderRadius: '24px', outline: 'none', fontSize: '15px' },
   desktopSendBtn: { marginLeft: '12px', padding: '12px 24px', backgroundColor: '#0084ff', color: '#fff', border: 'none', borderRadius: '24px', cursor: 'pointer', fontWeight: 'bold' },
