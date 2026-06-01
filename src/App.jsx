@@ -16,14 +16,28 @@ function App() {
   const [myBio, setMyBio] = useState('');
   const [isEditingBio, setIsEditingBio] = useState(false);
 
+  // NEW: Dark Mode State (Saves your choice in the browser)
+  const [darkMode, setDarkMode] = useState(() => {
+    const savedTheme = localStorage.getItem('chat_theme');
+    return savedTheme === 'dark';
+  });
+
   const chatEndRef = useRef(null);
+
+  // Toggle Theme Function
+  const toggleDarkMode = () => {
+    setDarkMode((prev) => {
+      const nextMode = !prev;
+      localStorage.setItem('chat_theme', nextMode ? 'dark' : 'light');
+      return nextMode;
+    });
+  };
 
   // 1. Auth Listener + Sync Profile Info
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        // Set default profile info if it doesn't exist, don't overwrite existing bio
         await setDoc(doc(db, 'users', currentUser.uid), {
           uid: currentUser.uid,
           displayName: currentUser.displayName,
@@ -32,7 +46,6 @@ function App() {
           searchName: currentUser.displayName.toLowerCase()
         }, { merge: true });
 
-        // Fetch our saved bio from Firestore
         const userDocRef = doc(db, 'users', currentUser.uid);
         const unsubDoc = onSnapshot(userDocRef, (docSnap) => {
           if (docSnap.exists() && docSnap.data().bio) {
@@ -45,14 +58,12 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Load Recent Chats from Local Caching
+  // 2. Load Recent Chats
   useEffect(() => {
     if (user) {
       const savedChats = localStorage.getItem(`recents_${user.uid}`);
       if (savedChats) {
         const parsedChats = JSON.parse(savedChats);
-        
-        // Listen to live bio updates for everyone in your history sidebar log
         const uids = parsedChats.map(u => u.uid);
         if (uids.length > 0) {
           const q = query(collection(db, 'users'), where('uid', 'in', uids));
@@ -67,7 +78,7 @@ function App() {
     }
   }, [user, activeChatUser]);
 
-  // 3. Live Search Users (Includes showing their custom bios)
+  // 3. Live Search Users
   useEffect(() => {
     if (!searchQuery.trim() || !user) {
       setSearchResults([]);
@@ -89,7 +100,7 @@ function App() {
     return () => unsubscribe();
   }, [searchQuery, user]);
 
-  // 4. Live Message Stream Channel
+  // 4. Live Message Stream
   useEffect(() => {
     if (!user || !activeChatUser) {
       setMessages([]);
@@ -109,7 +120,6 @@ function App() {
       setMessages(msgs);
     });
 
-    // Save profile baseline data to Recent History log
     setRecentChats((prev) => {
       const filtered = prev.filter((u) => u.uid !== activeChatUser.uid);
       const updated = [activeChatUser, ...filtered];
@@ -120,7 +130,6 @@ function App() {
     return () => unsubscribe();
   }, [activeChatUser, user]);
 
-  // Auto Scroll
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -128,20 +137,16 @@ function App() {
   const handleLogin = () => signInWithPopup(auth, googleProvider).catch(err => console.error(err));
   const handleLogout = () => { signOut(auth); setActiveChatUser(null); };
 
-  // 5. Save Custom Bio Status to Cloud
   const handleSaveBio = async () => {
     if (!user) return;
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
-        bio: myBio
-      });
+      await updateDoc(doc(db, 'users', user.uid), { bio: myBio });
       setIsEditingBio(false);
     } catch (err) {
-      console.error("Failed to update status:", err);
+      console.error(err);
     }
   };
 
-  // 6. Submit Send Message Text
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (newMessage.trim() === '' || !activeChatUser) return;
@@ -158,12 +163,27 @@ function App() {
     setNewMessage('');
   };
 
+  // Dynamic Theme Palette Generator
+  const theme = {
+    bgOuter: darkMode ? '#18191a' : '#f0f2f5',
+    bgContainer: darkMode ? '#242526' : '#ffffff',
+    bgSidebar: darkMode ? '#1c1d1e' : '#f7f8fa',
+    bgHeader: darkMode ? '#242526' : '#ffffff',
+    bgBubbleMe: '#0084ff',
+    bgBubbleThem: darkMode ? '#3a3b3c' : '#e4e6eb',
+    bgInput: darkMode ? '#3a3b3c' : '#f0f2f5',
+    textMain: darkMode ? '#e4e6eb' : '#333333',
+    textSub: darkMode ? '#b0b3b8' : '#666666',
+    border: darkMode ? '#3a3b3c' : '#e0e0e0',
+    rowHoverActive: darkMode ? '#2f3031' : '#e3f2fd'
+  };
+
   if (!user) {
     return (
-      <div style={styles.loginContainer}>
-        <div style={styles.loginCard}>
-          <h2>QuickChat Desktop</h2>
-          <p>Sign in with Google to talk to your person.</p>
+      <div style={{ ...styles.loginContainer, backgroundColor: theme.bgOuter }}>
+        <div style={{ ...styles.loginCard, backgroundColor: theme.bgContainer }}>
+          <h2 style={{ color: theme.textMain }}>QuickChat Desktop</h2>
+          <p style={{ color: theme.textSub }}>Sign in with Google to talk to your person.</p>
           <button onClick={handleLogin} style={styles.loginButton}>Sign in with Google</button>
         </div>
       </div>
@@ -171,24 +191,28 @@ function App() {
   }
 
   return (
-    <div style={styles.desktopWrapper}>
-      <div style={styles.desktopAppContainer}>
+    <div style={{ ...styles.desktopWrapper, backgroundColor: theme.bgOuter }}>
+      <div style={{ ...styles.desktopAppContainer, backgroundColor: theme.bgContainer, boxShadow: darkMode ? '0 0 20px rgba(0,0,0,0.4)' : '0 0 20px rgba(0,0,0,0.05)' }}>
         
         {/* SIDEBAR PANEL */}
-        <div style={styles.sidebar}>
+        <div style={{ ...styles.sidebar, backgroundColor: theme.bgSidebar, borderRight: `1px solid ${theme.border}` }}>
           
-          {/* USER PROFILE HEADER SECTION WITH BIO BUILDER */}
-          <div style={styles.myProfileHeaderContainer}>
+          <div style={{ ...styles.myProfileHeaderContainer, backgroundColor: theme.bgContainer, borderBottom: `1px solid ${theme.border}` }}>
             <div style={styles.myProfileHeader}>
               <img src={user.photoURL} alt="" style={styles.avatar} />
               <div style={styles.profileText}>
-                <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#333' }}>{user.displayName}</div>
+                <div style={{ fontWeight: 'bold', fontSize: '14px', color: theme.textMain }}>{user.displayName}</div>
                 <div style={{ fontSize: '11px', color: '#2ecc71', fontWeight: 'bold' }}>Online 🟢</div>
               </div>
+              
+              {/* NEW: Theme Selector Toggle Button */}
+              <button onClick={toggleDarkMode} style={styles.themeToggleBtn}>
+                {darkMode ? '☀️' : '🌙'}
+              </button>
+              
               <button onClick={handleLogout} style={styles.smallLogoutBtn}>Exit</button>
             </div>
             
-            {/* Custom Bio Status Widget Block */}
             <div style={styles.bioWidgetWrapper}>
               {isEditingBio ? (
                 <div style={{ display: 'flex', gap: '5px', width: '100%' }}>
@@ -198,12 +222,12 @@ function App() {
                     onChange={(e) => setMyBio(e.target.value)} 
                     placeholder="Set a status update..." 
                     maxLength={60}
-                    style={styles.bioInputField}
+                    style={{ ...styles.bioInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
                   />
                   <button onClick={handleSaveBio} style={styles.bioSaveBtn}>Save</button>
                 </div>
               ) : (
-                <div onClick={() => setIsEditingBio(true)} style={styles.bioStatusTextDisplay}>
+                <div onClick={() => setIsEditingBio(true)} style={{ ...styles.bioStatusTextDisplay, backgroundColor: theme.bgInput, color: theme.textSub }}>
                   {myBio ? `📝 "${myBio}"` : "✍️ Click to set a custom status bio..."}
                 </div>
               )}
@@ -216,40 +240,40 @@ function App() {
               placeholder="🔍 Search users to chat..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              style={styles.searchInput}
+              style={{ ...styles.searchInput, backgroundColor: theme.bgContainer, color: theme.textMain, border: `1px solid ${theme.border}` }}
             />
           </div>
 
           <div style={styles.userListContainer}>
             {searchQuery ? (
               <>
-                <div style={styles.sectionLabel}>Search Results</div>
+                <div style={{ ...styles.sectionLabel, color: theme.textSub }}>Search Results</div>
                 {searchResults.map((u) => (
                   <div key={u.uid} onClick={() => { setActiveChatUser(u); setSearchQuery(''); }} style={styles.userRow}>
                     <img src={u.photoURL} alt="" style={styles.avatar} />
                     <div style={styles.userRowTextGroup}>
-                      <span style={styles.userRowName}>{u.displayName}</span>
-                      {u.bio && <span style={styles.userRowBioPreview}>"{u.bio}"</span>}
+                      <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
+                      {u.bio && <span style={{ ...styles.userRowBioPreview, color: theme.textSub }}>"{u.bio}"</span>}
                     </div>
                   </div>
                 ))}
               </>
             ) : (
               <>
-                <div style={styles.sectionLabel}>Recent Conversations</div>
+                <div style={{ ...styles.sectionLabel, color: theme.textSub }}>Recent Conversations</div>
                 {recentChats.map((u) => (
                   <div
                     key={u.uid}
                     onClick={() => setActiveChatUser(u)}
                     style={{
                       ...styles.userRow,
-                      backgroundColor: activeChatUser?.uid === u.uid ? '#e3f2fd' : 'transparent'
+                      backgroundColor: activeChatUser?.uid === u.uid ? theme.rowHoverActive : 'transparent'
                     }}
                   >
                     <img src={u.photoURL} alt="" style={styles.avatar} />
                     <div style={styles.userRowTextGroup}>
-                      <span style={styles.userRowName}>{u.displayName}</span>
-                      {u.bio && <span style={styles.userRowBioPreview}>"{u.bio}"</span>}
+                      <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
+                      {u.bio && <span style={{ ...styles.userRowBioPreview, color: theme.textSub }}>"{u.bio}"</span>}
                     </div>
                   </div>
                 ))}
@@ -258,27 +282,27 @@ function App() {
           </div>
         </div>
 
-        {/* MESSAGING GRAPHIC DISPLAY STREAM PANEL */}
-        <div style={styles.chatWindow}>
+        {/* MESSAGING STREAM PANEL */}
+        <div style={{ ...styles.chatWindow, backgroundColor: theme.bgContainer }}>
           {activeChatUser ? (
             <>
-              <div style={styles.chatWindowHeader}>
+              <div style={{ ...styles.chatWindowHeader, backgroundColor: theme.bgHeader, borderBottom: `1px solid ${theme.border}` }}>
                 <img src={activeChatUser.photoURL} alt="" style={styles.avatar} />
                 <div style={{ marginLeft: '12px' }}>
-                  <div style={{ fontWeight: 'bold', color: '#333' }}>{activeChatUser.displayName}</div>
-                  {activeChatUser.bio && <div style={{ fontSize: '12px', color: '#666', fontStyle: 'italic', marginTop: '2px' }}>"{activeChatUser.bio}"</div>}
+                  <div style={{ fontWeight: 'bold', color: theme.textMain }}>{activeChatUser.displayName}</div>
+                  {activeChatUser.bio && <div style={{ fontSize: '12px', color: theme.textSub, fontStyle: 'italic', marginTop: '2px' }}>"{activeChatUser.bio}"</div>}
                 </div>
               </div>
 
-              <div style={styles.messageStream}>
+              <div style={{ ...styles.messageStream, backgroundColor: theme.bgOuter }}>
                 {messages.map((msg) => {
                   const isMe = msg.senderId === user.uid;
                   return (
                     <div key={msg.id} style={{ ...styles.messageRow, justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
                       <div style={{
                         ...styles.msgBubble,
-                        backgroundColor: isMe ? '#0084ff' : '#e4e6eb',
-                        color: isMe ? '#ffffff' : '#333333',
+                        backgroundColor: isMe ? theme.bgBubbleMe : theme.bgBubbleThem,
+                        color: isMe ? '#ffffff' : theme.textMain,
                       }}>
                         {msg.text}
                       </div>
@@ -288,21 +312,21 @@ function App() {
                 <div ref={chatEndRef} />
               </div>
 
-              <form onSubmit={handleSendMessage} style={styles.messageInputForm}>
+              <form onSubmit={handleSendMessage} style={{ ...styles.messageInputForm, backgroundColor: theme.bgHeader, borderTop: `1px solid ${theme.border}` }}>
                 <input
                   type="text"
                   placeholder={`Message ${activeChatUser.displayName}...`}
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
-                  style={styles.desktopInputField}
+                  style={{ ...styles.desktopInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
                 />
                 <button type="submit" style={styles.desktopSendBtn}>Send</button>
               </form>
             </>
           ) : (
-            <div style={styles.emptyStateContainer}>
-              <h3 style={{ color: '#555' }}>Your Private Chat</h3>
-              <p style={{ color: '#888' }}>Select your girlfriend's contact from history log or use search bar to start messaging.</p>
+            <div style={{ ...styles.emptyStateContainer, backgroundColor: theme.bgOuter }}>
+              <h3 style={{ color: theme.textMain }}>Your Private Chat</h3>
+              <p style={{ color: theme.textSub }}>Select your girlfriend's contact from history log or use search bar to start messaging.</p>
             </div>
           )}
         </div>
@@ -313,42 +337,42 @@ function App() {
 }
 
 const styles = {
-  loginContainer: { display: 'flex', height: '100vh', width: '100vw', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f2f5', fontFamily: 'sans-serif' },
-  loginCard: { padding: '50px', backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.08)', textAlign: 'center', maxWidth: '400px' },
+  loginContainer: { display: 'flex', height: '100vh', width: '100vw', justifyContent: 'center', alignItems: 'center', fontFamily: 'sans-serif' },
+  loginCard: { padding: '50px', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.08)', textAlign: 'center', maxWidth: '400px' },
   loginButton: { padding: '14px 28px', backgroundColor: '#4285F4', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '16px', cursor: 'pointer', fontWeight: 'bold', marginTop: '20px' },
-  desktopWrapper: { display: 'flex', width: '100vw', height: '100vh', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f2f5', overflow: 'hidden' },
-  desktopAppContainer: { display: 'flex', width: '100%', maxWidth: '1200px', height: '100%', backgroundColor: '#fff', boxShadow: '0 0 20px rgba(0,0,0,0.05)', overflow: 'hidden' },
-  sidebar: { width: '350px', minWidth: '320px', borderRight: '1px solid #e0e0e0', display: 'flex', flexDirection: 'column', backgroundColor: '#f7f8fa' },
-  myProfileHeaderContainer: { display: 'flex', flexDirection: 'column', backgroundColor: '#fff', borderBottom: '1px solid #e0e0e0' },
+  desktopWrapper: { display: 'flex', width: '100vw', height: '100vh', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  desktopAppContainer: { display: 'flex', width: '100%', maxWidth: '1200px', height: '100%', overflow: 'hidden' },
+  sidebar: { width: '350px', minWidth: '320px', display: 'flex', flexDirection: 'column' },
+  myProfileHeaderContainer: { display: 'flex', flexDirection: 'column' },
   myProfileHeader: { display: 'flex', alignItems: 'center', padding: '15px 15px 5px 15px' },
   profileText: { marginLeft: '10px', flex: 1 },
   avatar: { width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' },
+  
+  // Custom button styling for the theme selection toggle
+  themeToggleBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '10px', padding: '4px', userSelect: 'none' },
+  
   smallLogoutBtn: { padding: '6px 12px', backgroundColor: '#f44336', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
-  
-  // Custom status components layout elements
   bioWidgetWrapper: { padding: '0px 15px 12px 15px' },
-  bioStatusTextDisplay: { fontSize: '13px', color: '#555', backgroundColor: '#f0f2f5', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' },
-  bioInputField: { flex: 1, padding: '6px 10px', borderRadius: '6px', border: '1px solid #ccc', outline: 'none', fontSize: '13px' },
+  bioStatusTextDisplay: { fontSize: '13px', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' },
+  bioInputField: { flex: 1, padding: '6px 10px', borderRadius: '6px', outline: 'none', fontSize: '13px' },
   bioSaveBtn: { padding: '6px 12px', backgroundColor: '#2ecc71', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' },
-  
   searchBoxWrapper: { padding: '12px' },
-  searchInput: { width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #ccc', boxSizing: 'border-box', outline: 'none', fontSize: '14px', color: '#333', backgroundColor: '#fff' },
+  searchInput: { width: '100%', padding: '12px', borderRadius: '8px', boxSizing: 'border-box', outline: 'none', fontSize: '14px' },
   userListContainer: { flex: 1, overflowY: 'auto' },
-  sectionLabel: { padding: '10px 15px', fontSize: '12px', color: '#65676b', fontWeight: 'bold', textTransform: 'uppercase' },
+  sectionLabel: { padding: '10px 15px', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' },
   userRow: { display: 'flex', alignItems: 'center', padding: '12px 15px', cursor: 'pointer', transition: 'background 0.2s' },
   userRowTextGroup: { display: 'flex', flexDirection: 'column', marginLeft: '12px', flex: 1, overflow: 'hidden' },
-  userRowName: { fontWeight: '500', color: '#333' },
-  userRowBioPreview: { fontSize: '12px', color: '#777', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' },
-  
-  chatWindow: { flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#fff', height: '100%' },
-  chatWindowHeader: { display: 'flex', alignItems: 'center', padding: '15px 20px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#fff' },
-  messageStream: { flex: 1, padding: '20px', overflowY: 'auto', backgroundColor: '#f0f2f5', display: 'flex', flexDirection: 'column', gap: '8px' },
+  userRowName: { fontWeight: '500' },
+  userRowBioPreview: { fontSize: '12px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' },
+  chatWindow: { flex: 1, display: 'flex', flexDirection: 'column', height: '100%' },
+  chatWindowHeader: { display: 'flex', alignItems: 'center', padding: '15px 20px' },
+  messageStream: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' },
   messageRow: { display: 'flex', width: '100%' },
   msgBubble: { padding: '12px 16px', borderRadius: '18px', maxWidth: '60%', fontSize: '15px', lineHeight: '1.4', boxSizing: 'border-box' },
-  messageInputForm: { display: 'flex', padding: '15px 20px', backgroundColor: '#fff', borderTop: '1px solid #e0e0e0', alignItems: 'center' },
-  desktopInputField: { flex: 1, padding: '14px 18px', borderRadius: '24px', border: '1px solid #ccd0d5', outline: 'none', fontSize: '15px', backgroundColor: '#f0f2f5', color: '#333' },
+  messageInputForm: { display: 'flex', padding: '15px 20px', alignItems: 'center' },
+  desktopInputField: { flex: 1, padding: '14px 18px', borderRadius: '24px', outline: 'none', fontSize: '15px' },
   desktopSendBtn: { marginLeft: '12px', padding: '12px 24px', backgroundColor: '#0084ff', color: '#fff', border: 'none', borderRadius: '24px', cursor: 'pointer', fontWeight: 'bold' },
-  emptyStateContainer: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f2f5', textAlign: 'center', padding: '20px' }
+  emptyStateContainer: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '20px' }
 };
 
 export default App;
