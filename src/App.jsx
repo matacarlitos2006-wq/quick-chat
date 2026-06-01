@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, googleProvider, db } from './firebase'; 
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, updateDoc } from 'firebase/firestore';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -16,8 +16,13 @@ function App() {
   const [myBio, setMyBio] = useState('');
   const [isEditingBio, setIsEditingBio] = useState(false);
 
-  // Track which message ID is currently being hovered over
+  // Message Actions
   const [hoveredMessageId, setHoveredMessageId] = useState(null);
+
+  // NEW: Settings Modal States
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [customDisplayName, setCustomDisplayName] = useState('');
+  const [savedLocalName, setSavedLocalName] = useState('');
 
   // Dark Mode State
   const [darkMode, setDarkMode] = useState(() => {
@@ -35,23 +40,35 @@ function App() {
     });
   };
 
-  // 1. Auth Listener + Sync Profile Info
+  // 1. Auth Listener + Sync Profile Info (Listens for custom local names)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
+        // Build initial document structure safely
         await setDoc(doc(db, 'users', currentUser.uid), {
           uid: currentUser.uid,
-          displayName: currentUser.displayName,
           email: currentUser.email,
           photoURL: currentUser.photoURL,
-          searchName: currentUser.displayName.toLowerCase()
         }, { merge: true });
 
+        // Stream real-time profile customizations (Bio & Custom Name)
         const userDocRef = doc(db, 'users', currentUser.uid);
         const unsubDoc = onSnapshot(userDocRef, (docSnap) => {
-          if (docSnap.exists() && docSnap.data().bio) {
-            setMyBio(docSnap.data().bio);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.bio) setMyBio(data.bio);
+            
+            // Set name to custom app name if it exists, otherwise fall back to Google profile name
+            const activeName = data.customName || currentUser.displayName;
+            setSavedLocalName(activeName);
+            setCustomDisplayName(activeName);
+
+            // Backfill search values based on their active custom display identity
+            updateDoc(userDocRef, {
+              displayName: activeName,
+              searchName: activeName.toLowerCase()
+            }).catch(err => console.error(err));
           }
         });
         return () => unsubDoc();
@@ -122,13 +139,6 @@ function App() {
       setMessages(msgs);
     });
 
-    setRecentChats((prev) => {
-      const filtered = prev.filter((u) => u.uid !== activeChatUser.uid);
-      const updated = [activeChatUser, ...filtered];
-      localStorage.setItem(`recents_${user.uid}`, JSON.stringify(updated));
-      return updated;
-    });
-
     return () => unsubscribe();
   }, [activeChatUser, user]);
 
@@ -137,7 +147,7 @@ function App() {
   }, [messages]);
 
   const handleLogin = () => signInWithPopup(auth, googleProvider).catch(err => console.error(err));
-  const handleLogout = () => { signOut(auth); setActiveChatUser(null); };
+  const handleLogout = () => { signOut(auth); setActiveChatUser(null); setIsSettingsOpen(false); };
 
   const handleSaveBio = async () => {
     if (!user) return;
@@ -146,6 +156,23 @@ function App() {
       setIsEditingBio(false);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // NEW: Save Custom Application Profile Display Name
+  const handleSaveSettings = async (e) => {
+    e.preventDefault();
+    if (!customDisplayName.trim() || !user) return;
+
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        customName: customDisplayName.trim(),
+        displayName: customDisplayName.trim(),
+        searchName: customDisplayName.trim().toLowerCase()
+      });
+      setIsSettingsOpen(false);
+    } catch (err) {
+      console.error("Failed to update profile configurations: ", err);
     }
   };
 
@@ -159,21 +186,19 @@ function App() {
       text: newMessage,
       createdAt: new Date(),
       senderId: user.uid,
-      senderName: user.displayName,
+      senderName: savedLocalName,
       photoURL: user.photoURL
     });
     setNewMessage('');
   };
 
-  // NEW: Unsend / Delete Message Trigger Function
   const handleUnsendMessage = async (messageId) => {
     const confirmUnsend = window.confirm("Are you sure you want to unsend this message?");
     if (!confirmUnsend) return;
-
     try {
       await deleteDoc(doc(db, 'messages', messageId));
     } catch (err) {
-      console.error("Error deleting document from cloud: ", err);
+      console.error(err);
     }
   };
 
@@ -190,7 +215,8 @@ function App() {
     textSub: darkMode ? '#b0b3b8' : '#666666',
     border: darkMode ? '#3a3b3c' : '#e0e0e0',
     rowHoverActive: darkMode ? '#2f3031' : '#e3f2fd',
-    unsendBtnColor: darkMode ? '#ff4d4d' : '#e74c3c'
+    unsendBtnColor: darkMode ? '#ff4d4d' : '#e74c3c',
+    modalOverlay: darkMode ? 'rgba(0, 0, 0, 0.7)' : 'rgba(0, 0, 0, 0.5)'
   };
 
   if (!user) {
@@ -209,16 +235,22 @@ function App() {
     <div style={{ ...styles.desktopWrapper, backgroundColor: theme.bgOuter }}>
       <div style={{ ...styles.desktopAppContainer, backgroundColor: theme.bgContainer, boxShadow: darkMode ? '0 0 20px rgba(0,0,0,0.4)' : '0 0 20px rgba(0,0,0,0.05)' }}>
         
-        {/* SIDEBAR */}
+        {/* SIDEBAR PANEL */}
         <div style={{ ...styles.sidebar, backgroundColor: theme.bgSidebar, borderRight: `1px solid ${theme.border}` }}>
           <div style={{ ...styles.myProfileHeaderContainer, backgroundColor: theme.bgContainer, borderBottom: `1px solid ${theme.border}` }}>
             <div style={styles.myProfileHeader}>
               <img src={user.photoURL} alt="" style={styles.avatar} />
               <div style={styles.profileText}>
-                <div style={{ fontWeight: 'bold', fontSize: '14px', color: theme.textMain }}>{user.displayName}</div>
+                <div style={{ fontWeight: 'bold', fontSize: '14px', color: theme.textMain }}>{savedLocalName}</div>
                 <div style={{ fontSize: '11px', color: '#2ecc71', fontWeight: 'bold' }}>Online 🟢</div>
               </div>
+              
+              {/* Theme Selector Toggle */}
               <button onClick={toggleDarkMode} style={styles.themeToggleBtn}>{darkMode ? '☀️' : '🌙'}</button>
+              
+              {/* NEW: Settings Gear Button */}
+              <button onClick={() => setIsSettingsOpen(true)} style={styles.settingsGearBtn} title="Account Settings">⚙️</button>
+              
               <button onClick={handleLogout} style={styles.smallLogoutBtn}>Exit</button>
             </div>
             
@@ -273,7 +305,10 @@ function App() {
                 {recentChats.map((u) => (
                   <div
                     key={u.uid}
-                    onClick={() => setActiveChatUser(u)}
+                    onClick={() => {
+                      // Dynamically pull latest profile settings upon selection activation
+                      setActiveChatUser(u);
+                    }}
                     style={{
                       ...styles.userRow,
                       backgroundColor: activeChatUser?.uid === u.uid ? theme.rowHoverActive : 'transparent'
@@ -313,12 +348,10 @@ function App() {
                       onMouseEnter={() => setHoveredMessageId(msg.id)}
                       onMouseLeave={() => setHoveredMessageId(null)}
                     >
-                      {/* NEW: Display the Unsend button on the left side of your message bubble when hovered */}
                       {isMe && hoveredMessageId === msg.id && (
                         <button 
                           onClick={() => handleUnsendMessage(msg.id)}
                           style={{ ...styles.unsendActionBtn, color: theme.unsendBtnColor }}
-                          title="Unsend message"
                         >
                           Unsend 🗑️
                         </button>
@@ -350,13 +383,45 @@ function App() {
             </>
           ) : (
             <div style={{ ...styles.emptyStateContainer, backgroundColor: theme.bgOuter }}>
-              <h3 style={{ color: theme.textMain }}>Your Private Chat</h3>
+              <h3 style={{ color: theme.textMain }}>No Chat Selected</h3>
               <p style={{ color: theme.textSub }}>Search for a user or select a profile from your recent conversations to start messaging.</p>
             </div>
           )}
         </div>
 
       </div>
+
+      {/* NEW: SETTINGS MODAL INTERFACE SLIDE OVERLAY */}
+      {isSettingsOpen && (
+        <div style={{ ...styles.modalOverlayFrame, backgroundColor: theme.modalOverlay }}>
+          <div style={{ ...styles.modalCard, backgroundColor: theme.bgContainer, border: `1px solid ${theme.border}` }}>
+            <h3 style={{ color: theme.textMain, marginTop: 0, marginBottom: '15px' }}>⚙️ App Preferences</h3>
+            
+            <form onSubmit={handleSaveSettings}>
+              <div style={{ marginBottom: '20px', textAlign: 'left' }}>
+                <label style={{ ...styles.modalLabel, color: theme.textSub }}>Custom Display Name</label>
+                <input 
+                  type="text" 
+                  value={customDisplayName}
+                  onChange={(e) => setCustomDisplayName(e.target.value)}
+                  placeholder="Enter custom nickname..."
+                  maxLength={25}
+                  style={{ ...styles.modalInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
+                />
+                <span style={{ fontSize: '11px', color: theme.textSub, display: 'block', marginTop: '5px' }}>
+                  This edits your handle inside QuickChat without modifying your actual Google account credentials.
+                </span>
+              </div>
+
+              <div style={styles.modalActionsRow}>
+                <button type="button" onClick={() => setIsSettingsOpen(false)} style={styles.modalCancelBtn}>Cancel</button>
+                <button type="submit" style={styles.modalSaveBtn}>Save Profiles</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -366,13 +431,17 @@ const styles = {
   loginCard: { padding: '50px', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.08)', textAlign: 'center', maxWidth: '400px' },
   loginButton: { padding: '14px 28px', backgroundColor: '#4285F4', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '16px', cursor: 'pointer', fontWeight: 'bold', marginTop: '20px' },
   desktopWrapper: { display: 'flex', width: '100vw', height: '100vh', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-  desktopAppContainer: { display: 'flex', width: '100%', maxWidth: '1200px', height: '100%', overflow: 'hidden' },
+  desktopAppContainer: { display: 'flex', width: '100%', maxWidth: '1200px', height: '100%', overflow: 'hidden', position: 'relative' },
   sidebar: { width: '350px', minWidth: '320px', display: 'flex', flexDirection: 'column' },
   myProfileHeaderContainer: { display: 'flex', flexDirection: 'column' },
   myProfileHeader: { display: 'flex', alignItems: 'center', padding: '15px 15px 5px 15px' },
   profileText: { marginLeft: '10px', flex: 1 },
   avatar: { width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' },
-  themeToggleBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '10px', padding: '4px', userSelect: 'none' },
+  
+  themeToggleBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '5px', padding: '4px', userSelect: 'none' },
+  // Custom alignment options for settings triggers
+  settingsGearBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '12px', padding: '4px', userSelect: 'none' },
+  
   smallLogoutBtn: { padding: '6px 12px', backgroundColor: '#f44336', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   bioWidgetWrapper: { padding: '0px 15px 12px 15px' },
   bioStatusTextDisplay: { fontSize: '13px', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' },
@@ -389,16 +458,22 @@ const styles = {
   chatWindow: { flex: 1, display: 'flex', flexDirection: 'column', height: '100%' },
   chatWindowHeader: { display: 'flex', alignItems: 'center', padding: '15px 20px' },
   messageStream: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' },
-  
-  // Adjusted alignment configuration to neatly float actions next to message flows
   messageRow: { display: 'flex', width: '100%', alignItems: 'center', position: 'relative', gap: '10px' },
-  unsendActionBtn: { border: 'none', background: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: '600', padding: '4px 8px', borderRadius: '4px', transition: 'opacity 0.2s' },
-  
+  unsendActionBtn: { border: 'none', background: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: '600', padding: '4px 8px', borderRadius: '4px' },
   msgBubble: { padding: '12px 16px', borderRadius: '18px', maxWidth: '60%', fontSize: '15px', lineHeight: '1.4', boxSizing: 'border-box' },
   messageInputForm: { display: 'flex', padding: '15px 20px', alignItems: 'center' },
   desktopInputField: { flex: 1, padding: '14px 18px', borderRadius: '24px', outline: 'none', fontSize: '15px' },
   desktopSendBtn: { marginLeft: '12px', padding: '12px 24px', backgroundColor: '#0084ff', color: '#fff', border: 'none', borderRadius: '24px', cursor: 'pointer', fontWeight: 'bold' },
-  emptyStateContainer: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '20px' }
+  emptyStateContainer: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '20px' },
+
+  // NEW: Settings Modal Styling Blueprint Blocks
+  modalOverlayFrame: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 },
+  modalCard: { padding: '30px', borderRadius: '12px', width: '90%', maxWidth: '450px', boxShadow: '0 12px 36px rgba(0,0,0,0.15)', textAlign: 'center' },
+  modalLabel: { display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '8px' },
+  modalInputField: { width: '100%', padding: '12px', borderRadius: '8px', boxSizing: 'border-box', outline: 'none', fontSize: '14px' },
+  modalActionsRow: { display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' },
+  modalCancelBtn: { padding: '10px 20px', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', fontSize: '14px', color: '#aaa', fontWeight: '500' },
+  modalSaveBtn: { padding: '10px 22px', backgroundColor: '#0084ff', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }
 };
 
 export default App;
