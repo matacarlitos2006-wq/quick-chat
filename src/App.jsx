@@ -6,7 +6,7 @@ import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, upd
 // DEVELOPER DEFINITION
 const DEVELOPER_EMAIL = "matacarlitos2006@gmail.com";
 
-// NEW: Custom TikTok-style Cyan Verification Badge Component
+// Custom TikTok-style Cyan Verification Badge Component
 const TikTokBadge = () => (
   <svg 
     viewBox="0 0 24 24" 
@@ -61,6 +61,7 @@ function App() {
   });
 
   const chatEndRef = useRef(null);
+  const idleTimerRef = useRef(null); // Ref to track the 10-minute away timeout pointer
 
   const toggleDarkMode = () => {
     setDarkMode((prev) => {
@@ -69,6 +70,62 @@ function App() {
       return nextMode;
     });
   };
+
+  // Helper function to dynamically update user presence state in the cloud
+  const updateUserPresence = async (statusValue) => {
+    if (!auth.currentUser) return;
+    try {
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+        presence: statusValue,
+        lastActive: new Date()
+      });
+    } catch (err) {
+      console.error("Presence system error:", err);
+    }
+  };
+
+  // NEW: Presence System (Online / Away / Offline tracking)
+  useEffect(() => {
+    if (!user) return;
+
+    // 1. Mark user as Online immediately upon logging into the site
+    updateUserPresence('online');
+
+    // 2. Timer function that triggers after 10 minutes of complete idleness
+    const resetIdleTimer = () => {
+      // If they were away, moving mouse brings them back online instantly
+      updateUserPresence('online');
+
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      
+      // 10 minutes = 600,000 milliseconds
+      idleTimerRef.current = setTimeout(() => {
+        updateUserPresence('away');
+      }, 600000);
+    };
+
+    // Listen for user interactions anywhere on the screen
+    window.addEventListener('mousemove', resetIdleTimer);
+    window.addEventListener('keydown', resetIdleTimer);
+    window.addEventListener('click', resetIdleTimer);
+
+    resetIdleTimer(); // Initial running trigger
+
+    // 3. Mark user as offline if they manually close the app or log out
+    const handleBeforeUnload = () => {
+      // This runs right as the browser starts tearing down the tab layout
+      updateUserPresence('offline');
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      window.removeEventListener('mousemove', resetIdleTimer);
+      window.removeEventListener('keydown', resetIdleTimer);
+      window.removeEventListener('click', resetIdleTimer);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [user]);
 
   // 1. Auth Listener + Sync Profile Info
   useEffect(() => {
@@ -121,7 +178,7 @@ function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // 3. Load Recent Private DMs
+  // 3. Load Recent Private DMs (Tracks dynamic status bubble indicators)
   useEffect(() => {
     if (user) {
       const savedChats = localStorage.getItem(`recents_${user.uid}`);
@@ -189,23 +246,38 @@ function App() {
     });
 
     if (!isChannel) {
+      // Refetch latest user presence values when opening direct messenger panel links
+      const userRef = doc(db, 'users', activeChat.uid);
+      const unsubUserPresence = onSnapshot(userRef, (snapshot) => {
+        if (snapshot.exists()) {
+          setActiveChat(prev => prev && !prev.isChannel ? { ...prev, ...snapshot.data() } : prev);
+        }
+      });
+
       setRecentChats((prev) => {
         const filtered = prev.filter((u) => u.uid !== activeChat.uid);
         const updated = [activeChat, ...filtered];
         localStorage.setItem(`recents_${user.uid}`, JSON.stringify(updated));
         return updated;
       });
+
+      return () => { unsubscribe(); unsubUserPresence(); };
     }
 
     return () => unsubscribe();
-  }, [activeChat, user]);
+  }, [activeChat?.uid, user]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const handleLogin = () => signInWithPopup(auth, googleProvider).catch(err => console.error(err));
-  const handleLogout = () => { signOut(auth); setActiveChat(null); setIsSettingsOpen(false); };
+  const handleLogout = async () => { 
+    await updateUserPresence('offline');
+    signOut(auth); 
+    setActiveChat(null); 
+    setIsSettingsOpen(false); 
+  };
 
   const handleSaveBio = async () => {
     if (!user) return;
@@ -283,6 +355,21 @@ function App() {
     msg.text.toLowerCase().includes(messageSearchQuery.toLowerCase())
   );
 
+  // Helper component to render color status bulbs based on string matches
+  const StatusIndicator = ({ presenceState }) => {
+    let color = '#9e9e9e'; // Default Offline Grey
+    let text = 'Offline';
+    if (presenceState === 'online') { color = '#2ecc71'; text = 'Online'; }
+    if (presenceState === 'away') { color = '#f1c40f'; text = 'Away'; }
+    
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: color, display: 'inline-block' }} />
+        <span style={{ fontSize: '11px', color: color, fontWeight: 'bold' }}>{text}</span>
+      </div>
+    );
+  };
+
   // Theme Palette
   const theme = {
     bgOuter: darkMode ? '#18191a' : '#f0f2f5',
@@ -324,10 +411,10 @@ function App() {
               <div style={styles.profileText}>
                 <div style={{ fontWeight: 'bold', fontSize: '14px', color: theme.textMain, display: 'flex', alignItems: 'center', gap: '4px' }}>
                   {savedLocalName}
-                  {/* NEW: Replaced badge text with TikTok style checkmark component */}
                   {user.email === DEVELOPER_EMAIL && <TikTokBadge />}
                 </div>
-                <div style={{ fontSize: '11px', color: '#2ecc71', fontWeight: 'bold' }}>Online 🟢</div>
+                {/* Always show online state for owner loop layout */}
+                <StatusIndicator presenceState="online" />
               </div>
               <button onClick={toggleDarkMode} style={styles.themeToggleBtn}>{darkMode ? '☀️' : '🌙'}</button>
               <button onClick={() => setIsSettingsOpen(true)} style={styles.settingsGearBtn} title="Account Settings">⚙️</button>
@@ -377,7 +464,7 @@ function App() {
                         <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
                         {u.email === DEVELOPER_EMAIL && <TikTokBadge />}
                       </div>
-                      {u.bio && <span style={{ ...styles.userRowBioPreview, color: theme.textSub }}>"{u.bio}"</span>}
+                      <StatusIndicator presenceState={u.presence} />
                     </div>
                   </div>
                 ))}
@@ -423,7 +510,8 @@ function App() {
                         <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
                         {u.email === DEVELOPER_EMAIL && <TikTokBadge />}
                       </div>
-                      {u.bio && <span style={{ ...styles.userRowBioPreview, color: theme.textSub }}>"{u.bio}"</span>}
+                      {/* Live status indicators inside row rendering blocks */}
+                      <StatusIndicator presenceState={u.presence} />
                     </div>
                   </div>
                 ))}
@@ -451,9 +539,15 @@ function App() {
                     </div>
                     
                     {!activeChat.isChannel && activeChat.email === DEVELOPER_EMAIL ? (
-                      <div style={{ fontSize: '12px', color: '#25f4ee', fontWeight: 'bold', marginTop: '2px' }}>Developer of the Website 🛠️</div>
-                    ) : !activeChat.isChannel && activeChat.bio ? (
-                      <div style={{ fontSize: '12px', color: theme.textSub, fontStyle: 'italic', marginTop: '2px' }}>"{activeChat.bio}"</div>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '2px' }}>
+                        <div style={{ fontSize: '12px', color: '#25f4ee', fontWeight: 'bold' }}>Developer of the Website 🛠️</div>
+                        <StatusIndicator presenceState={activeChat.presence} />
+                      </div>
+                    ) : !activeChat.isChannel ? (
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '2px' }}>
+                        <StatusIndicator presenceState={activeChat.presence} />
+                        {activeChat.bio && <div style={{ fontSize: '12px', color: theme.textSub, fontStyle: 'italic' }}>"{activeChat.bio}"</div>}
+                      </div>
                     ) : null}
 
                     {activeChat.isChannel && (
@@ -503,7 +597,6 @@ function App() {
                         )}
 
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '60%' }}>
-                          {/* Inside-group channel metadata rendering */}
                           {!isMe && (
                             <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px', display: 'flex', alignItems: 'center', gap: '2px' }}>
                               {msg.senderName}
@@ -511,7 +604,6 @@ function App() {
                             </span>
                           )}
                           
-                          {/* Sender name marker for your own text rows in public room views */}
                           {activeChat.isChannel && isMe && (
                             <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginRight: '4px', display: 'flex', alignItems: 'center', gap: '2px' }}>
                               {msg.senderName}
@@ -591,9 +683,6 @@ function App() {
                   placeholder="Paste an image link (Imgur, Discord, etc.)"
                   style={{ ...styles.modalInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
                 />
-                <span style={{ fontSize: '11px', color: theme.textSub, marginTop: '4px', display: 'block' }}>
-                  Leave completely blank to continue using your standard Google profile image.
-                </span>
               </div>
 
               <div style={styles.modalActionsRow}>
