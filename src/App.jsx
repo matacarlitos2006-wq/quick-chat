@@ -1,34 +1,37 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, googleProvider, db } from './firebase'; 
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-// 1. ADDED limitToLast HERE
 import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, updateDoc, deleteDoc, limitToLast } from 'firebase/firestore';
 
-// ... (KEEP ALL YOUR EXISTING CONSTANTS LIKE DEVELOPER_EMAIL, SOUND_SEND, ETC. HERE)
+// ... (KEEP YOUR CONSTANTS, SVGs, AND HELPER FUNCTIONS HERE)
 
 function App() {
-  // ... (KEEP ALL YOUR EXISTING STATES HERE)
-  // 2. ADD THIS STATE:
+  // 1. STATE DECLARATIONS
+  const [user, setUser] = useState(null);
+  const [activeChat, setActiveChat] = useState(null); // CRITICAL: This was likely missing
+  const [messages, setMessages] = useState([]);
   const [messageLimit, setMessageLimit] = useState(30);
+  const [newMessage, setNewMessage] = useState('');
+  const [messageSearchQuery, setMessageSearchQuery] = useState('');
+  // ... (KEEP ALL YOUR OTHER STATES: recentChats, channels, darkMode, etc.)
 
-  // ... (KEEP YOUR EXISTING FUNCTIONS LIKE updateUserPresence, isImageURL, etc.)
+  const chatEndRef = useRef(null);
 
-  // 3. REPLACE YOUR MESSAGE STREAM useEffect WITH THIS:
+  // 2. PAGINATED MESSAGE STREAM
   useEffect(() => {
     if (!user || !activeChat) {
       setMessages([]);
       return;
     }
-    setMessageSearchQuery(''); 
-
-    const isChannel = activeChat.isChannel;
-    const roomId = isChannel ? activeChat.id : [user.uid, activeChat.uid].sort().join('_');
+    
+    const isChannel = activeChat?.isChannel;
+    const roomId = isChannel ? activeChat?.id : [user.uid, activeChat?.uid].sort().join('_');
 
     const q = query(
       collection(db, 'messages'),
       where('chatRoomId', '==', roomId),
       orderBy('createdAt', 'asc'),
-      limitToLast(messageLimit) // Optimization: Limits read size
+      limitToLast(messageLimit)
     );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -37,22 +40,21 @@ function App() {
       setMessages(msgs);
     });
 
-    // ... (KEEP YOUR PRESENCE LOGIC AND CLEANUP)
     return () => unsubscribe();
-  }, [activeChat?.uid, user, messageLimit]); // Dependency included
+  }, [activeChat?.uid, user, messageLimit]);
 
-  // ... (KEEP YOUR OTHER USEEFFECTS)
+  // ... (KEEP YOUR OTHER USEEFFECTS: Auth, Presence, Sound, etc.)
 
+  // 3. RENDER
   return (
-    <div style={{ ...styles.desktopWrapper, backgroundColor: theme.bgOuter }}>
-      {/* ... (KEEP YOUR SIDEBAR CODE) ... */}
-      
-      <div style={{ ...styles.chatWindow, backgroundColor: theme.bgContainer }}>
+    <div style={{ ...styles.desktopWrapper }}>
+      {/* ... (KEEP YOUR SIDEBAR HERE) ... */}
+
+      <div style={{ ...styles.chatWindow }}>
         {activeChat ? (
           <>
-            <div style={{ ...styles.messageStream, backgroundColor: theme.bgOuter }}>
-              
-              {/* 4. ADD THE LOAD MORE BUTTON HERE */}
+            <div style={{ ...styles.messageStream }}>
+              {/* PAGINATION TRIGGER */}
               <button 
                 onClick={() => setMessageLimit(prev => prev + 30)}
                 style={styles.loadMoreBtn}
@@ -60,22 +62,22 @@ function App() {
                 Load Older Messages
               </button>
 
-              {/* ... (YOUR EXISTING filteredMessages.map(...) CODE) ... */}
+              {/* ... (KEEP YOUR EXISTING MAP LOGIC) ... */}
               <div ref={chatEndRef} />
             </div>
-            {/* ... (KEEP YOUR FORM AND FOOTER) ... */}
+            {/* ... (KEEP YOUR FORM) ... */}
           </>
         ) : (
-          <div style={styles.emptyStateContainer}>Select a chat to start</div>
+          <div>Select a chat</div>
         )}
       </div>
     </div>
   );
 }
 
-// 5. ADD THE NEW STYLE AT THE BOTTOM
+// 4. STYLE OBJECT
 const styles = {
-  // ... (YOUR EXISTING STYLES)
+  // ... (KEEP YOUR EXISTING STYLES)
   loadMoreBtn: { 
     margin: '10px auto', 
     padding: '8px 16px', 
