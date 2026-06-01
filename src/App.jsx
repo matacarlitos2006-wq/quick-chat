@@ -23,13 +23,16 @@ function App() {
   // Message Actions
   const [hoveredMessageId, setHoveredMessageId] = useState(null);
 
-  // NEW: Inside-Chat Message Stream Filtering Search State
+  // Inside-Chat Message Stream Filtering Search State
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
 
   // Settings Modal States
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [customDisplayName, setCustomDisplayName] = useState('');
   const [savedLocalName, setSavedLocalName] = useState('');
+  // NEW: Custom Local Profile Picture States
+  const [customAvatarURL, setCustomAvatarURL] = useState('');
+  const [savedAvatarURL, setSavedAvatarURL] = useState('');
 
   // Group Channel Creation Modal State
   const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
@@ -56,10 +59,10 @@ function App() {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
+        // Initial sync ensures fields exist without destroying existing custom data
         await setDoc(doc(db, 'users', currentUser.uid), {
           uid: currentUser.uid,
           email: currentUser.email,
-          photoURL: currentUser.photoURL,
         }, { merge: true });
 
         const userDocRef = doc(db, 'users', currentUser.uid);
@@ -68,13 +71,20 @@ function App() {
             const data = docSnap.data();
             if (data.bio) setMyBio(data.bio);
             
+            // Sync custom display names or fallback to Google account name
             const activeName = data.customName || currentUser.displayName;
             setSavedLocalName(activeName);
             setCustomDisplayName(activeName);
 
+            // NEW: Fallback tree for Avatar Picture (Custom URL -> Firestore fallback -> Google photoURL)
+            const activeAvatar = data.customAvatarURL || data.photoURL || currentUser.photoURL;
+            setSavedAvatarURL(activeAvatar);
+            setCustomAvatarURL(data.customAvatarURL || '');
+
             updateDoc(userDocRef, {
               displayName: activeName,
-              searchName: activeName.toLowerCase()
+              searchName: activeName.toLowerCase(),
+              photoURL: data.photoURL || currentUser.photoURL // Safeguard standard field mapping
             }).catch(err => console.error(err));
           }
         });
@@ -140,14 +150,14 @@ function App() {
     return () => unsubscribe();
   }, [searchQuery, user]);
 
-  // 5. Live Message Stream Channel (Clear header search when changing chat rooms)
+  // 5. Live Message Stream Channel
   useEffect(() => {
     if (!user || !activeChat) {
       setMessages([]);
       return;
     }
 
-    setMessageSearchQuery(''); // Reset search input value automatically on room change
+    setMessageSearchQuery(''); 
 
     const isChannel = activeChat.isChannel;
     const roomId = isChannel ? activeChat.id : [user.uid, activeChat.uid].sort().join('_');
@@ -194,6 +204,7 @@ function App() {
     }
   };
 
+  // UPDATED: Process both custom display name AND custom profile picture input
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     if (!customDisplayName.trim() || !user) return;
@@ -201,7 +212,8 @@ function App() {
       await updateDoc(doc(db, 'users', user.uid), {
         customName: customDisplayName.trim(),
         displayName: customDisplayName.trim(),
-        searchName: customDisplayName.trim().toLowerCase()
+        searchName: customDisplayName.trim().toLowerCase(),
+        customAvatarURL: customAvatarURL.trim() // Write custom image string directly to document schema
       });
       setIsSettingsOpen(false);
     } catch (err) {
@@ -239,7 +251,7 @@ function App() {
       createdAt: new Date(),
       senderId: user.uid,
       senderName: savedLocalName,
-      photoURL: user.photoURL
+      photoURL: savedAvatarURL // Uses active calculated profile asset variable string
     });
     setNewMessage('');
   };
@@ -254,7 +266,6 @@ function App() {
     }
   };
 
-  // NEW: Filter local messages list array dynamically based on header query value
   const filteredMessages = messages.filter((msg) => 
     msg.text.toLowerCase().includes(messageSearchQuery.toLowerCase())
   );
@@ -296,7 +307,8 @@ function App() {
         <div style={{ ...styles.sidebar, backgroundColor: theme.bgSidebar, borderRight: `1px solid ${theme.border}` }}>
           <div style={{ ...styles.myProfileHeaderContainer, backgroundColor: theme.bgContainer, borderBottom: `1px solid ${theme.border}` }}>
             <div style={styles.myProfileHeader}>
-              <img src={user.photoURL} alt="" style={styles.avatar} />
+              {/* UPDATED: Source mapped to savedAvatarURL tracking active local state updates */}
+              <img src={savedAvatarURL} alt="" style={styles.avatar} />
               <div style={styles.profileText}>
                 <div style={{ fontWeight: 'bold', fontSize: '14px', color: theme.textMain }}>{savedLocalName}</div>
                 <div style={{ fontSize: '11px', color: '#2ecc71', fontWeight: 'bold' }}>Online 🟢</div>
@@ -343,7 +355,7 @@ function App() {
                 <div style={{ ...styles.sectionLabel, color: theme.textSub }}>Search Results</div>
                 {searchResults.map((u) => (
                   <div key={u.uid} onClick={() => { setActiveChat(u); setSearchQuery(''); }} style={styles.userRow}>
-                    <img src={u.photoURL} alt="" style={styles.avatar} />
+                    <img src={u.customAvatarURL || u.photoURL} alt="" style={styles.avatar} />
                     <div style={styles.userRowTextGroup}>
                       <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
                       {u.bio && <span style={{ ...styles.userRowBioPreview, color: theme.textSub }}>"{u.bio}"</span>}
@@ -386,7 +398,7 @@ function App() {
                       backgroundColor: (!activeChat?.isChannel && activeChat?.uid === u.uid) ? theme.rowHoverActive : 'transparent'
                     }}
                   >
-                    <img src={user.photoURL} alt="" style={styles.avatar} />
+                    <img src={u.customAvatarURL || u.photoURL} alt="" style={styles.avatar} />
                     <div style={styles.userRowTextGroup}>
                       <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
                       {u.bio && <span style={{ ...styles.userRowBioPreview, color: theme.textSub }}>"{u.bio}"</span>}
@@ -402,13 +414,13 @@ function App() {
         <div style={{ ...styles.chatWindow, backgroundColor: theme.bgContainer }}>
           {activeChat ? (
             <>
-              {/* HEADER CONTAINER WITH NEW INTERACTION INPUT SEARCH ALIGNMENT */}
+              {/* HEADER CONTAINER */}
               <div style={{ ...styles.chatWindowHeader, backgroundColor: theme.bgHeader, borderBottom: `1px solid ${theme.border}` }}>
                 <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
                   {activeChat.isChannel ? (
                     <div style={{ ...styles.hashtagAvatar, backgroundColor: theme.bgInput, color: theme.textMain, width: '40px', height: '40px', fontSize: '18px' }}>#</div>
                   ) : (
-                    <img src={activeChat.photoURL} alt="" style={styles.avatar} />
+                    <img src={activeChat.customAvatarURL || activeChat.photoURL} alt="" style={styles.avatar} />
                   )}
                   <div style={{ marginLeft: '12px' }}>
                     <div style={{ fontWeight: 'bold', color: theme.textMain }}>
@@ -423,7 +435,7 @@ function App() {
                   </div>
                 </div>
 
-                {/* NEW: Text Message Stream Sub-Search Input Form Field */}
+                {/* Text Message Stream Sub-Search Input Form Field */}
                 <div style={styles.msgSearchContainer}>
                   <input 
                     type="text"
@@ -438,7 +450,7 @@ function App() {
                 </div>
               </div>
 
-              {/* STREAM RENDER CONTAINER (Swapped from standard messages list array to our new filtered messages array map) */}
+              {/* STREAM RENDER CONTAINER */}
               <div style={{ ...styles.messageStream, backgroundColor: theme.bgOuter }}>
                 {filteredMessages.length > 0 ? (
                   filteredMessages.map((msg) => {
@@ -459,6 +471,11 @@ function App() {
                           </button>
                         )}
 
+                        {/* Rendering corresponding message avatars dynamically based on sender */}
+                        {!isMe && (
+                          <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 0 }} />
+                        )}
+
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '60%' }}>
                           {activeChat.isChannel && !isMe && (
                             <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px' }}>
@@ -474,6 +491,10 @@ function App() {
                             {msg.text}
                           </div>
                         </div>
+                        
+                        {isMe && (
+                          <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 2 }} />
+                        )}
                       </div>
                     );
                   })
@@ -512,7 +533,8 @@ function App() {
           <div style={{ ...styles.modalCard, backgroundColor: theme.bgContainer, border: `1px solid ${theme.border}` }}>
             <h3 style={{ color: theme.textMain, marginTop: 0, marginBottom: '15px' }}>⚙️ App Preferences</h3>
             <form onSubmit={handleSaveSettings}>
-              <div style={{ marginBottom: '20px', textAlign: 'left' }}>
+              
+              <div style={{ marginBottom: '15px', textAlign: 'left' }}>
                 <label style={{ ...styles.modalLabel, color: theme.textSub }}>Custom Display Name</label>
                 <input 
                   type="text" 
@@ -522,6 +544,22 @@ function App() {
                   style={{ ...styles.modalInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
                 />
               </div>
+
+              {/* NEW: Input Form Field targeting image links for website profile display isolation */}
+              <div style={{ marginBottom: '20px', textAlign: 'left' }}>
+                <label style={{ ...styles.modalLabel, color: theme.textSub }}>Custom Profile Picture URL</label>
+                <input 
+                  type="text" 
+                  value={customAvatarURL}
+                  onChange={(e) => setCustomAvatarURL(e.target.value)}
+                  placeholder="Paste an image link (Imgur, Discord, etc.)"
+                  style={{ ...styles.modalInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
+                />
+                <span style={{ fontSize: '11px', color: theme.textSub, marginTop: '4px', display: 'block' }}>
+                  Leave completely blank to continue using your standard Google profile image.
+                </span>
+              </div>
+
               <div style={styles.modalActionsRow}>
                 <button type="button" onClick={() => setIsSettingsOpen(false)} style={styles.modalCancelBtn}>Cancel</button>
                 <button type="submit" style={styles.modalSaveBtn}>Save Profiles</button>
@@ -592,12 +630,9 @@ const styles = {
   userRowBioPreview: { fontSize: '12px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' },
   chatWindow: { flex: 1, display: 'flex', flexDirection: 'column', height: '100%' },
   chatWindowHeader: { display: 'flex', alignItems: 'center', padding: '15px 20px', position: 'relative' },
-  
-  // NEW: Chat Message Action Header Alignment Configurations
   msgSearchContainer: { position: 'relative', display: 'flex', alignItems: 'center' },
   msgHeaderSearchField: { padding: '8px 30px 8px 12px', borderRadius: '18px', width: '200px', outline: 'none', fontSize: '13px', transition: 'width 0.3s' },
   clearSearchXBtn: { position: 'absolute', right: '10px', border: 'none', background: 'none', color: '#aaa', cursor: 'pointer', fontSize: '11px' },
-
   messageStream: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' },
   messageRow: { display: 'flex', width: '100%', alignItems: 'center', position: 'relative', gap: '10px' },
   unsendActionBtn: { border: 'none', background: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: '600', padding: '4px 8px', borderRadius: '4px' },
