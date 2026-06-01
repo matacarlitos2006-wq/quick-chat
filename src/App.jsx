@@ -7,10 +7,9 @@ import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, upd
 const DEVELOPER_EMAIL = "matacarlitos2006@gmail.com";
 
 // High-quality, lightweight UI sound effect URLs
-const SOUND_SEND = "https://assets.mixkit.co/active_storage/sfx/2357/2357-84.wav"; // Soft digital pop
-const SOUND_RECEIVE = "https://assets.mixkit.co/active_storage/sfx/2568/2568-84.wav"; // Crisp chime ring
+const SOUND_SEND = "https://assets.mixkit.co/active_storage/sfx/2357/2357-84.wav"; 
+const SOUND_RECEIVE = "https://assets.mixkit.co/active_storage/sfx/2568/2568-84.wav"; 
 
-// Custom TikTok-style Cyan Verification Badge Component
 const TikTokBadge = () => (
   <svg 
     viewBox="0 0 24 24" 
@@ -27,39 +26,24 @@ function App() {
   const [user, setUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
-  
-  // Active Chat State (User Profile or Group Channel)
   const [activeChat, setActiveChat] = useState(null); 
-  
   const [recentChats, setRecentChats] = useState([]);
   const [channels, setChannels] = useState([]); 
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
-  
-  // Status & Bio States
   const [myBio, setMyBio] = useState('');
   const [isEditingBio, setIsEditingBio] = useState(false);
-
-  // Message Action states
   const [hoveredMessageId, setHoveredMessageId] = useState(null);
   const [activeReactionMenuId, setActiveReactionMenuId] = useState(null);
-
-  // Inside-Chat Message Stream Filtering Search State
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
-
-  // Settings Modal States
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [customDisplayName, setCustomDisplayName] = useState('');
   const [savedLocalName, setSavedLocalName] = useState('');
-  // Custom Local Profile Picture States
   const [customAvatarURL, setCustomAvatarURL] = useState('');
   const [savedAvatarURL, setSavedAvatarURL] = useState('');
-
-  // Group Channel Creation Modal State
   const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
 
-  // Dark Mode State
   const [darkMode, setDarkMode] = useState(() => {
     const savedTheme = localStorage.getItem('chat_theme');
     return savedTheme === 'dark';
@@ -67,7 +51,7 @@ function App() {
 
   const chatEndRef = useRef(null);
   const idleTimerRef = useRef(null); 
-  const prevMessagesCountRef = useRef(0); // Tracks message lengths to prevent sound loops on initial load
+  const prevMessagesCountRef = useRef(0);
 
   const toggleDarkMode = () => {
     setDarkMode((prev) => {
@@ -77,7 +61,6 @@ function App() {
     });
   };
 
-  // Helper function to dynamically update user presence state in the cloud
   const updateUserPresence = async (statusValue) => {
     if (!auth.currentUser) return;
     try {
@@ -86,14 +69,12 @@ function App() {
         lastActive: new Date()
       });
     } catch (err) {
-      console.error("Presence system error:", err);
+      console.error(err);
     }
   };
 
-  // Helper to detect if a message text string is an image or GIF URL link
   const isImageURL = (url) => {
     if (!url.startsWith('http://') && !url.startsWith('https://')) return false;
-    // Cleans up query strings from URLs (like unspash variables) to accurately test extensions
     const cleanUrl = url.split('?')[0].toLowerCase();
     return cleanUrl.endsWith('.jpg') || 
            cleanUrl.endsWith('.jpeg') || 
@@ -102,17 +83,13 @@ function App() {
            cleanUrl.endsWith('.webp');
   };
 
-  // Presence System (Online / Away / Offline tracking)
   useEffect(() => {
     if (!user) return;
-
     updateUserPresence('online');
 
     const resetIdleTimer = () => {
       updateUserPresence('online');
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-      
-      // 10 minutes = 600,000 milliseconds
       idleTimerRef.current = setTimeout(() => {
         updateUserPresence('away');
       }, 600000);
@@ -121,7 +98,6 @@ function App() {
     window.addEventListener('mousemove', resetIdleTimer);
     window.addEventListener('keydown', resetIdleTimer);
     window.addEventListener('click', resetIdleTimer);
-
     resetIdleTimer(); 
 
     const handleBeforeUnload = () => {
@@ -138,29 +114,22 @@ function App() {
     };
   }, [user]);
 
-  // Sound Effects Triggers Engine
   useEffect(() => {
-    // Prevent sounds from firing when first loading into an empty chat or changing rooms
     if (messages.length === 0) {
       prevMessagesCountRef.current = 0;
       return;
     }
-
     if (prevMessagesCountRef.current > 0 && messages.length > prevMessagesCountRef.current) {
       const lastMessage = messages[messages.length - 1];
-      
-      // Trigger appropriate sound based on sender identity
       if (lastMessage.senderId === user?.uid) {
-        new Audio(SOUND_SEND).play().catch(e => console.log("Sound play blocked by browser config"));
+        new Audio(SOUND_SEND).play().catch(e => console.log(e));
       } else {
-        new Audio(SOUND_RECEIVE).play().catch(e => console.log("Sound play blocked by browser config"));
+        new Audio(SOUND_RECEIVE).play().catch(e => console.log(e));
       }
     }
-
     prevMessagesCountRef.current = messages.length;
   }, [messages, user]);
 
-  // 1. Auth Listener + Sync Profile Info
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -197,7 +166,6 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Stream Global Public Channels from Firestore
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, 'channels'), orderBy('createdAt', 'desc'));
@@ -211,7 +179,6 @@ function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // 3. Load Recent Private DMs
   useEffect(() => {
     if (user) {
       const savedChats = localStorage.getItem(`recents_${user.uid}`);
@@ -231,7 +198,6 @@ function App() {
     }
   }, [user, activeChat]);
 
-  // 4. Live Search Users
   useEffect(() => {
     if (!searchQuery.trim() || !user) {
       setSearchResults([]);
@@ -253,13 +219,11 @@ function App() {
     return () => unsubscribe();
   }, [searchQuery, user]);
 
-  // 5. Live Message Stream Channel
   useEffect(() => {
     if (!user || !activeChat) {
       setMessages([]);
       return;
     }
-
     setMessageSearchQuery(''); 
 
     const isChannel = activeChat.isChannel;
@@ -295,7 +259,6 @@ function App() {
 
       return () => { unsubscribe(); unsubUserPresence(); };
     }
-
     return () => unsubscribe();
   }, [activeChat?.uid, user]);
 
@@ -369,7 +332,7 @@ function App() {
       senderName: savedLocalName,
       senderEmail: user.email, 
       photoURL: savedAvatarURL,
-      reactions: {} // Initialize an empty reactions matrix block for cloud records
+      reactions: {} 
     });
     setNewMessage('');
   };
@@ -378,37 +341,32 @@ function App() {
     const confirmUnsend = window.confirm("Are you sure you want to unsend this message?");
     if (!confirmUnsend) return;
     try {
-      await deleteDoc(doc(doc(db, 'messages', messageId)));
+      await deleteDoc(doc(db, 'messages', messageId));
     } catch (err) {
       console.error(err);
     }
   };
 
-  // Toggle emoji reactions state records inside cloud Firestore nodes
   const handleToggleReaction = async (messageId, currentReactions = {}, emoji) => {
     if (!user) return;
-    
     const updatedReactions = { ...currentReactions };
     const currentEmojiUsersList = updatedReactions[emoji] || [];
 
     if (currentEmojiUsersList.includes(user.uid)) {
-      // User already clicked it -> Remove their reaction stamp
       updatedReactions[emoji] = currentEmojiUsersList.filter(id => id !== user.uid);
     } else {
-      // Add user reaction stamp
       updatedReactions[emoji] = [...currentEmojiUsersList, user.uid];
     }
 
-    // Clean up empty reaction lists to save cloud storage space
     if (updatedReactions[emoji].length === 0) {
       delete updatedReactions[emoji];
     }
 
     try {
       await updateDoc(doc(db, 'messages', messageId), { reactions: updatedReactions });
-      setActiveReactionMenuId(null); // Close popover menu panel
+      setActiveReactionMenuId(null); 
     } catch (err) {
-      console.error("Failed to append reaction state:", err);
+      console.error(err);
     }
   };
 
@@ -430,7 +388,6 @@ function App() {
     );
   };
 
-  // Theme Palette
   const theme = {
     bgOuter: darkMode ? '#18191a' : '#f0f2f5',
     bgContainer: darkMode ? '#242526' : '#ffffff',
@@ -461,7 +418,7 @@ function App() {
 
   return (
     <div style={{ ...styles.desktopWrapper, backgroundColor: theme.bgOuter }}>
-      <div style={{ ...styles.desktopAppContainer, backgroundColor: theme.bgContainer, boxShadow: darkMode ? '0 0 20px rgba(0,0,0,0.4)' : '0 0 20px rgba(0,0,0,0.05)' }}>
+      <div style={{ ...styles.desktopAppContainer, backgroundColor: theme.bgContainer }}>
         
         {/* SIDEBAR PANEL */}
         <div style={{ ...styles.sidebar, backgroundColor: theme.bgSidebar, borderRight: `1px solid ${theme.border}` }}>
@@ -530,7 +487,6 @@ function App() {
               </>
             ) : (
               <>
-                {/* GROUP CHANNELS SUBSECTION */}
                 <div style={styles.sectionHeaderRow}>
                   <div style={{ ...styles.sectionLabel, color: theme.textSub, padding: 0 }}>Group Channels</div>
                   <button onClick={() => setIsCreateChannelOpen(true)} style={styles.createChannelBtn}>Create Room ➕</button>
@@ -552,7 +508,6 @@ function App() {
                   </div>
                 ))}
 
-                {/* PRIVATE DIRECT MESSAGES */}
                 <div style={{ ...styles.sectionLabel, color: theme.textSub, marginTop: '15px' }}>Direct Messages</div>
                 {recentChats.map((u) => (
                   <div
@@ -582,16 +537,16 @@ function App() {
         <div style={{ ...styles.chatWindow, backgroundColor: theme.bgContainer }}>
           {activeChat ? (
             <>
-              {/* HEADER CONTAINER */}
+              {/* HEADER */}
               <div style={{ ...styles.chatWindowHeader, backgroundColor: theme.bgHeader, borderBottom: `1px solid ${theme.border}` }}>
-                <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 }}>
                   {activeChat.isChannel ? (
                     <div style={{ ...styles.hashtagAvatar, backgroundColor: theme.bgInput, color: theme.textMain, width: '40px', height: '40px', fontSize: '18px' }}>#</div>
                   ) : (
                     <img src={activeChat.customAvatarURL || activeChat.photoURL} alt="" style={styles.avatar} />
                   )}
-                  <div style={{ marginLeft: '12px' }}>
-                    <div style={{ fontWeight: 'bold', color: theme.textMain, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <div style={{ marginLeft: '12px', minWidth: 0, flex: 1 }}>
+                    <div style={{ fontWeight: 'bold', color: theme.textMain, display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {activeChat.isChannel ? activeChat.name : activeChat.displayName}
                       {!activeChat.isChannel && activeChat.email === DEVELOPER_EMAIL && <TikTokBadge />}
                     </div>
@@ -602,9 +557,9 @@ function App() {
                         <StatusIndicator presenceState={activeChat.presence} />
                       </div>
                     ) : !activeChat.isChannel ? (
-                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '2px' }}>
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '2px', overflow: 'hidden' }}>
                         <StatusIndicator presenceState={activeChat.presence} />
-                        {activeChat.bio && <div style={{ fontSize: '12px', color: theme.textSub, fontStyle: 'italic' }}>"{activeChat.bio}"</div>}
+                        {activeChat.bio && <div style={{ fontSize: '12px', color: theme.textSub, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{activeChat.bio}"</div>}
                       </div>
                     ) : null}
 
@@ -645,13 +600,11 @@ function App() {
                           setActiveReactionMenuId(null);
                         }}
                       >
-                        {/* Hover triggers action button layout */}
                         {hoveredMessageId === msg.id && (
-                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', order: isMe ? 0 : 3 }}>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', order: isMe ? 0 : 3, flexShrink: 0 }}>
                             <button 
                               onClick={() => setActiveReactionMenuId(activeReactionMenuId === msg.id ? null : msg.id)}
                               style={styles.reactionTriggerBtn}
-                              title="React to message"
                             >
                               😊
                             </button>
@@ -666,7 +619,6 @@ function App() {
                           </div>
                         )}
 
-                        {/* Hover popup reaction picker bar */}
                         {activeReactionMenuId === msg.id && (
                           <div style={{ ...styles.emojiPickerPopover, backgroundColor: theme.bgContainer, border: `1px solid ${theme.border}` }}>
                             {['❤️', '😂', '👍', '😮', '😢'].map(emoji => (
@@ -682,10 +634,11 @@ function App() {
                         )}
 
                         {!isMe && (
-                          <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 1 }} />
+                          <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 1, flexShrink: 0 }} />
                         )}
 
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '60%', order: 2, position: 'relative' }}>
+                        {/* Crucial Fix: added minWidth: 0 to force flex child to respect wrapping */}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '70%', minWidth: 0, order: 2, position: 'relative' }}>
                           {!isMe && (
                             <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px', display: 'flex', alignItems: 'center', gap: '2px' }}>
                               {msg.senderName}
@@ -700,9 +653,8 @@ function App() {
                             </span>
                           )}
 
-                          {/* Dynamic image checking block */}
                           {containsMedia ? (
-                            <a href={msg.text} target="_blank" rel="noopener noreferrer">
+                            <a href={msg.text} target="_blank" rel="noopener noreferrer" style={{ maxWidth: '100%' }}>
                               <img 
                                 src={msg.text} 
                                 alt="Shared attachment link" 
@@ -714,13 +666,11 @@ function App() {
                               ...styles.msgBubble,
                               backgroundColor: isMe ? theme.bgBubbleMe : theme.bgBubbleThem,
                               color: isMe ? '#ffffff' : theme.textMain,
-                              maxWidth: '100%'
                             }}>
                               {msg.text}
                             </div>
                           )}
 
-                          {/* Render stamp array indicators directly underneath standard text boxes */}
                           {msg.reactions && Object.keys(msg.reactions).length > 0 && (
                             <div style={{ ...styles.renderedReactionsContainer, justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
                               {Object.entries(msg.reactions).map(([emoji, users]) => {
@@ -743,11 +693,10 @@ function App() {
                               })}
                             </div>
                           )}
-
                         </div>
                         
                         {isMe && (
-                          <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 4 }} />
+                          <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 4, flexShrink: 0 }} />
                         )}
                       </div>
                     );
@@ -763,7 +712,7 @@ function App() {
               <form onSubmit={handleSendMessage} style={{ ...styles.messageInputForm, backgroundColor: theme.bgHeader, borderTop: `1px solid ${theme.border}` }}>
                 <input
                   type="text"
-                  placeholder={activeChat.isChannel ? `Message ${activeChat.name}... (paste image/gif URL to share media)` : `Message ${activeChat.displayName}... (paste link to share media)`}
+                  placeholder={activeChat.isChannel ? `Message ${activeChat.name}...` : `Message ${activeChat.displayName}...`}
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                   style={{ ...styles.desktopInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
@@ -781,13 +730,12 @@ function App() {
 
       </div>
 
-      {/* ACCOUNT PREFERENCES SETTINGS MODAL */}
+      {/* MODALS */}
       {isSettingsOpen && (
         <div style={{ ...styles.modalOverlayFrame, backgroundColor: theme.modalOverlay }}>
           <div style={{ ...styles.modalCard, backgroundColor: theme.bgContainer, border: `1px solid ${theme.border}` }}>
             <h3 style={{ color: theme.textMain, marginTop: 0, marginBottom: '15px' }}>⚙️ App Preferences</h3>
             <form onSubmit={handleSaveSettings}>
-              
               <div style={{ marginBottom: '15px', textAlign: 'left' }}>
                 <label style={{ ...styles.modalLabel, color: theme.textSub }}>Custom Display Name</label>
                 <input 
@@ -798,18 +746,16 @@ function App() {
                   style={{ ...styles.modalInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
                 />
               </div>
-
               <div style={{ marginBottom: '20px', textAlign: 'left' }}>
                 <label style={{ ...styles.modalLabel, color: theme.textSub }}>Custom Profile Picture URL</label>
                 <input 
                   type="text" 
                   value={customAvatarURL}
                   onChange={(e) => setCustomAvatarURL(e.target.value)}
-                  placeholder="Paste an image link (Imgur, Discord, etc.)"
+                  placeholder="Paste an image link"
                   style={{ ...styles.modalInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
                 />
               </div>
-
               <div style={styles.modalActionsRow}>
                 <button type="button" onClick={() => setIsSettingsOpen(false)} style={styles.modalCancelBtn}>Cancel</button>
                 <button type="submit" style={styles.modalSaveBtn}>Save Profiles</button>
@@ -819,7 +765,6 @@ function App() {
         </div>
       )}
 
-      {/* CREATE CHANNEL POPUP MODAL */}
       {isCreateChannelOpen && (
         <div style={{ ...styles.modalOverlayFrame, backgroundColor: theme.modalOverlay }}>
           <div style={{ ...styles.modalCard, backgroundColor: theme.bgContainer, border: `1px solid ${theme.border}` }}>
@@ -831,7 +776,7 @@ function App() {
                   type="text" 
                   value={newChannelName}
                   onChange={(e) => setNewChannelName(e.target.value)}
-                  placeholder="e.g. general-chat, plans, gaming"
+                  placeholder="e.g. general-chat"
                   maxLength={20}
                   style={{ ...styles.modalInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
                 />
@@ -853,15 +798,17 @@ const styles = {
   loginContainer: { display: 'flex', height: '100vh', width: '100vw', justifyContent: 'center', alignItems: 'center', fontFamily: 'sans-serif' },
   loginCard: { padding: '50px', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.08)', textAlign: 'center', maxWidth: '400px' },
   loginButton: { padding: '14px 28px', backgroundColor: '#4285F4', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '16px', cursor: 'pointer', fontWeight: 'bold', marginTop: '20px' },
+  // 100vw and 100vh forces layout container frame borders to snap directly edge-to-edge
   desktopWrapper: { display: 'flex', width: '100vw', height: '100vh', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-  desktopAppContainer: { display: 'flex', width: '100%', maxWidth: '1200px', height: '100%', overflow: 'hidden', position: 'relative' },
-  sidebar: { width: '350px', minWidth: '320px', display: 'flex', flexDirection: 'column' },
+  // FIX: Removed maxWidth '1200px' block constraints -> Expanded to full 100% monitor viewport coverage
+  desktopAppContainer: { display: 'flex', width: '100%', height: '100%', overflow: 'hidden', position: 'relative' },
+  sidebar: { width: '320px', minWidth: '320px', display: 'flex', flexDirection: 'column', flexShrink: 0 },
   myProfileHeaderContainer: { display: 'flex', flexDirection: 'column' },
   myProfileHeader: { display: 'flex', alignItems: 'center', padding: '15px 15px 5px 15px' },
-  profileText: { marginLeft: '10px', flex: 1 },
+  profileText: { marginLeft: '10px', flex: 1, minWidth: 0 },
   avatar: { width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' },
-  themeToggleBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '5px', padding: '4px', userSelect: 'none' },
-  settingsGearBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '12px', padding: '4px', userSelect: 'none' },
+  themeToggleBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '5px', padding: '4px' },
+  settingsGearBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '12px', padding: '4px' },
   smallLogoutBtn: { padding: '6px 12px', backgroundColor: '#f44336', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   bioWidgetWrapper: { padding: '0px 15px 12px 15px' },
   bioStatusTextDisplay: { fontSize: '13px', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' },
@@ -877,24 +824,25 @@ const styles = {
   userRow: { display: 'flex', alignItems: 'center', padding: '12px 15px', cursor: 'pointer', transition: 'background 0.2s' },
   userRowTextGroup: { display: 'flex', flexDirection: 'column', marginLeft: '12px', flex: 1, overflow: 'hidden' },
   userRowName: { fontWeight: '500' },
-  chatWindow: { flex: 1, display: 'flex', flexDirection: 'column', height: '100%' },
+  chatWindow: { flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 },
   chatWindowHeader: { display: 'flex', alignItems: 'center', padding: '15px 20px', position: 'relative' },
-  msgSearchContainer: { position: 'relative', display: 'flex', alignItems: 'center' },
-  msgHeaderSearchField: { padding: '8px 30px 8px 12px', borderRadius: '18px', width: '200px', outline: 'none', fontSize: '13px', transition: 'width 0.3s' },
+  msgSearchContainer: { position: 'relative', display: 'flex', alignItems: 'center', flexShrink: 0 },
+  msgHeaderSearchField: { padding: '8px 30px 8px 12px', borderRadius: '18px', width: '180px', outline: 'none', fontSize: '13px' },
   clearSearchXBtn: { position: 'absolute', right: '10px', border: 'none', background: 'none', color: '#aaa', cursor: 'pointer', fontSize: '11px' },
   messageStream: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' },
   messageRow: { display: 'flex', width: '100%', alignItems: 'center', position: 'relative', gap: '10px' },
   reactionTriggerBtn: { border: 'none', background: 'none', fontSize: '14px', cursor: 'pointer', padding: '4px' },
   unsendActionBtn: { border: 'none', background: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: '600', padding: '4px 8px', borderRadius: '4px' },
-  msgBubble: { padding: '12px 16px', borderRadius: '18px', maxWidth: '100%', fontSize: '15px', lineHeight: '1.4', boxSizing: 'border-box' },
-  renderedMediaMessage: { maxWidth: '100%', maxHeight: '250px', borderRadius: '12px', display: 'block', objectFit: 'cover', marginTop: '2px', cursor: 'pointer' },
+  // FIX: Added line wrapping attributes to text bubbles to break down extreme URLs cleanly
+  msgBubble: { padding: '12px 16px', borderRadius: '18px', fontSize: '15px', lineHeight: '1.4', boxSizing: 'border-box', wordBreak: 'break-word', whiteSpace: 'pre-wrap' },
+  renderedMediaMessage: { maxWidth: '100%', maxHeight: '280px', borderRadius: '12px', display: 'block', objectFit: 'cover', marginTop: '2px', cursor: 'pointer' },
   emojiPickerPopover: { position: 'absolute', display: 'flex', gap: '8px', padding: '6px 10px', borderRadius: '20px', top: '-35px', left: '50%', transform: 'translateX(-50%)', zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' },
-  popoverEmojiItem: { cursor: 'pointer', fontSize: '16px', transition: 'transform 0.1s', ":hover": { transform: 'scale(1.2)' } },
+  popoverEmojiItem: { cursor: 'pointer', fontSize: '16px' },
   renderedReactionsContainer: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px', width: '100%' },
   reactionPillBadge: { display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 6px', borderRadius: '10px', cursor: 'pointer', fontSize: '12px', userSelect: 'none' },
   messageInputForm: { display: 'flex', padding: '15px 20px', alignItems: 'center' },
-  desktopInputField: { flex: 1, padding: '14px 18px', borderRadius: '24px', outline: 'none', fontSize: '15px' },
-  desktopSendBtn: { marginLeft: '12px', padding: '12px 24px', backgroundColor: '#0084ff', color: '#fff', border: 'none', borderRadius: '24px', cursor: 'pointer', fontWeight: 'bold' },
+  desktopInputField: { flex: 1, padding: '14px 18px', borderRadius: '24px', outline: 'none', fontSize: '15px', minWidth: 0 },
+  desktopSendBtn: { marginLeft: '12px', padding: '12px 24px', backgroundColor: '#0084ff', color: '#fff', border: 'none', borderRadius: '24px', cursor: 'pointer', fontWeight: 'bold', flexShrink: 0 },
   emptyStateContainer: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '20px' },
   modalOverlayFrame: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 },
   modalCard: { padding: '30px', borderRadius: '12px', width: '90%', maxWidth: '450px', boxShadow: '0 12px 36px rgba(0,0,0,0.15)', textAlign: 'center' },
