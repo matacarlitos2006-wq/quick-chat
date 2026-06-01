@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, googleProvider, db } from './firebase'; 
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, updateDoc, deleteDoc } from 'firebase/firestore';
 
 function App() {
   const [user, setUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   
-  // Active Chat State can now be a user profile OR a group channel structure
+  // Active Chat State (User Profile or Group Channel)
   const [activeChat, setActiveChat] = useState(null); 
   
   const [recentChats, setRecentChats] = useState([]);
-  const [channels, setChannels] = useState([]); // NEW: List of public group channels
+  const [channels, setChannels] = useState([]); 
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   
@@ -23,12 +23,15 @@ function App() {
   // Message Actions
   const [hoveredMessageId, setHoveredMessageId] = useState(null);
 
+  // NEW: Inside-Chat Message Stream Filtering Search State
+  const [messageSearchQuery, setMessageSearchQuery] = useState('');
+
   // Settings Modal States
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [customDisplayName, setCustomDisplayName] = useState('');
   const [savedLocalName, setSavedLocalName] = useState('');
 
-  // NEW: Group Channel Creation Modal State
+  // Group Channel Creation Modal State
   const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
 
@@ -81,7 +84,7 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // NEW: 2. Stream Global Public Channels from Firestore
+  // 2. Stream Global Public Channels from Firestore
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, 'channels'), orderBy('createdAt', 'desc'));
@@ -137,14 +140,15 @@ function App() {
     return () => unsubscribe();
   }, [searchQuery, user]);
 
-  // 5. Live Message Stream Channel (Handles both DMs and Group Channels)
+  // 5. Live Message Stream Channel (Clear header search when changing chat rooms)
   useEffect(() => {
     if (!user || !activeChat) {
       setMessages([]);
       return;
     }
 
-    // Determine if target chat is a public channel or a private user DM room
+    setMessageSearchQuery(''); // Reset search input value automatically on room change
+
     const isChannel = activeChat.isChannel;
     const roomId = isChannel ? activeChat.id : [user.uid, activeChat.uid].sort().join('_');
 
@@ -161,7 +165,6 @@ function App() {
       setMessages(msgs);
     });
 
-    // Cache to recent history block ONLY if it's a private 1-on-1 text conversation
     if (!isChannel) {
       setRecentChats((prev) => {
         const filtered = prev.filter((u) => u.uid !== activeChat.uid);
@@ -206,14 +209,10 @@ function App() {
     }
   };
 
-  // NEW: Create Group Channel Database Trigger
   const handleCreateChannel = async (e) => {
     e.preventDefault();
     if (!newChannelName.trim()) return;
-
-    // Standardize channel formatting (e.g., #general-chat)
     const formattedName = newChannelName.trim().toLowerCase().replace(/\s+/g, '-');
-
     try {
       await addDoc(collection(db, 'channels'), {
         name: formattedName,
@@ -223,7 +222,7 @@ function App() {
       setNewChannelName('');
       setIsCreateChannelOpen(false);
     } catch (err) {
-      console.error("Error creating room: ", err);
+      console.error(err);
     }
   };
 
@@ -254,6 +253,11 @@ function App() {
       console.error(err);
     }
   };
+
+  // NEW: Filter local messages list array dynamically based on header query value
+  const filteredMessages = messages.filter((msg) => 
+    msg.text.toLowerCase().includes(messageSearchQuery.toLowerCase())
+  );
 
   // Theme Palette
   const theme = {
@@ -349,10 +353,10 @@ function App() {
               </>
             ) : (
               <>
-                {/* NEW: GROUP CHANNELS SUBSECTION MENU BLOCK */}
+                {/* GROUP CHANNELS SUBSECTION */}
                 <div style={styles.sectionHeaderRow}>
                   <div style={{ ...styles.sectionLabel, color: theme.textSub, padding: 0 }}>Group Channels</div>
-                  <button onClick={() => setIsCreateChannelOpen(true)} style={styles.createChannelBtn} title="Create Group Room">Create Room ➕</button>
+                  <button onClick={() => setIsCreateChannelOpen(true)} style={styles.createChannelBtn}>Create Room ➕</button>
                 </div>
                 
                 {channels.map((chan) => (
@@ -371,7 +375,7 @@ function App() {
                   </div>
                 ))}
 
-                {/* PRIVATE DIRECT MESSAGES SUBSECTION */}
+                {/* PRIVATE DIRECT MESSAGES */}
                 <div style={{ ...styles.sectionLabel, color: theme.textSub, marginTop: '15px' }}>Direct Messages</div>
                 {recentChats.map((u) => (
                   <div
@@ -382,7 +386,7 @@ function App() {
                       backgroundColor: (!activeChat?.isChannel && activeChat?.uid === u.uid) ? theme.rowHoverActive : 'transparent'
                     }}
                   >
-                    <img src={u.photoURL} alt="" style={styles.avatar} />
+                    <img src={user.photoURL} alt="" style={styles.avatar} />
                     <div style={styles.userRowTextGroup}>
                       <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
                       {u.bio && <span style={{ ...styles.userRowBioPreview, color: theme.textSub }}>"{u.bio}"</span>}
@@ -398,63 +402,86 @@ function App() {
         <div style={{ ...styles.chatWindow, backgroundColor: theme.bgContainer }}>
           {activeChat ? (
             <>
+              {/* HEADER CONTAINER WITH NEW INTERACTION INPUT SEARCH ALIGNMENT */}
               <div style={{ ...styles.chatWindowHeader, backgroundColor: theme.bgHeader, borderBottom: `1px solid ${theme.border}` }}>
-                {activeChat.isChannel ? (
-                  <div style={{ ...styles.hashtagAvatar, backgroundColor: theme.bgInput, color: theme.textMain, width: '40px', height: '40px', fontSize: '18px' }}>#</div>
-                ) : (
-                  <img src={activeChat.photoURL} alt="" style={styles.avatar} />
-                )}
-                <div style={{ marginLeft: '12px' }}>
-                  <div style={{ fontWeight: 'bold', color: theme.textMain }}>
-                    {activeChat.isChannel ? activeChat.name : activeChat.displayName}
-                  </div>
-                  {!activeChat.isChannel && activeChat.bio && (
-                    <div style={{ fontSize: '12px', color: theme.textSub, fontStyle: 'italic', marginTop: '2px' }}>"{activeChat.bio}"</div>
+                <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                  {activeChat.isChannel ? (
+                    <div style={{ ...styles.hashtagAvatar, backgroundColor: theme.bgInput, color: theme.textMain, width: '40px', height: '40px', fontSize: '18px' }}>#</div>
+                  ) : (
+                    <img src={activeChat.photoURL} alt="" style={styles.avatar} />
                   )}
-                  {activeChat.isChannel && (
-                    <div style={{ fontSize: '11px', color: theme.textSub, marginTop: '2px' }}>Public Room</div>
+                  <div style={{ marginLeft: '12px' }}>
+                    <div style={{ fontWeight: 'bold', color: theme.textMain }}>
+                      {activeChat.isChannel ? activeChat.name : activeChat.displayName}
+                    </div>
+                    {!activeChat.isChannel && activeChat.bio && (
+                      <div style={{ fontSize: '12px', color: theme.textSub, fontStyle: 'italic', marginTop: '2px' }}>"{activeChat.bio}"</div>
+                    )}
+                    {activeChat.isChannel && (
+                      <div style={{ fontSize: '11px', color: theme.textSub, marginTop: '2px' }}>Public Room</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* NEW: Text Message Stream Sub-Search Input Form Field */}
+                <div style={styles.msgSearchContainer}>
+                  <input 
+                    type="text"
+                    placeholder="🔍 Search messages..."
+                    value={messageSearchQuery}
+                    onChange={(e) => setMessageSearchQuery(e.target.value)}
+                    style={{ ...styles.msgHeaderSearchField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
+                  />
+                  {messageSearchQuery && (
+                    <button onClick={() => setMessageSearchQuery('')} style={styles.clearSearchXBtn}>✕</button>
                   )}
                 </div>
               </div>
 
+              {/* STREAM RENDER CONTAINER (Swapped from standard messages list array to our new filtered messages array map) */}
               <div style={{ ...styles.messageStream, backgroundColor: theme.bgOuter }}>
-                {messages.map((msg) => {
-                  const isMe = msg.senderId === user.uid;
-                  return (
-                    <div 
-                      key={msg.id} 
-                      style={{ ...styles.messageRow, justifyContent: isMe ? 'flex-end' : 'flex-start' }}
-                      onMouseEnter={() => setHoveredMessageId(msg.id)}
-                      onMouseLeave={() => setHoveredMessageId(null)}
-                    >
-                      {isMe && hoveredMessageId === msg.id && (
-                        <button 
-                          onClick={() => handleUnsendMessage(msg.id)}
-                          style={{ ...styles.unsendActionBtn, color: theme.unsendBtnColor }}
-                        >
-                          Unsend 🗑️
-                        </button>
-                      )}
-
-                      {/* Display name tag above bubble inside global group rooms */}
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '60%' }}>
-                        {activeChat.isChannel && !isMe && (
-                          <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px' }}>
-                            {msg.senderName}
-                          </span>
+                {filteredMessages.length > 0 ? (
+                  filteredMessages.map((msg) => {
+                    const isMe = msg.senderId === user.uid;
+                    return (
+                      <div 
+                        key={msg.id} 
+                        style={{ ...styles.messageRow, justifyContent: isMe ? 'flex-end' : 'flex-start' }}
+                        onMouseEnter={() => setHoveredMessageId(msg.id)}
+                        onMouseLeave={() => setHoveredMessageId(null)}
+                      >
+                        {isMe && hoveredMessageId === msg.id && (
+                          <button 
+                            onClick={() => handleUnsendMessage(msg.id)}
+                            style={{ ...styles.unsendActionBtn, color: theme.unsendBtnColor }}
+                          >
+                            Unsend 🗑️
+                          </button>
                         )}
-                        <div style={{
-                          ...styles.msgBubble,
-                          backgroundColor: isMe ? theme.bgBubbleMe : theme.bgBubbleThem,
-                          color: isMe ? '#ffffff' : theme.textMain,
-                          maxWidth: '100%'
-                        }}>
-                          {msg.text}
+
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '60%' }}>
+                          {activeChat.isChannel && !isMe && (
+                            <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px' }}>
+                              {msg.senderName}
+                            </span>
+                          )}
+                          <div style={{
+                            ...styles.msgBubble,
+                            backgroundColor: isMe ? theme.bgBubbleMe : theme.bgBubbleThem,
+                            color: isMe ? '#ffffff' : theme.textMain,
+                            maxWidth: '100%'
+                          }}>
+                            {msg.text}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '40px 20px', color: theme.textSub, fontSize: '14px', fontStyle: 'italic' }}>
+                    {messageSearchQuery ? "No matching messages found." : "No messages here yet. Start the conversation!"}
+                  </div>
+                )}
                 <div ref={chatEndRef} />
               </div>
 
@@ -504,7 +531,7 @@ function App() {
         </div>
       )}
 
-      {/* NEW: CREATE CHANNEL POPUP MODAL */}
+      {/* CREATE CHANNEL POPUP MODAL */}
       {isCreateChannelOpen && (
         <div style={{ ...styles.modalOverlayFrame, backgroundColor: theme.modalOverlay }}>
           <div style={{ ...styles.modalCard, backgroundColor: theme.bgContainer, border: `1px solid ${theme.border}` }}>
@@ -545,7 +572,6 @@ const styles = {
   myProfileHeader: { display: 'flex', alignItems: 'center', padding: '15px 15px 5px 15px' },
   profileText: { marginLeft: '10px', flex: 1 },
   avatar: { width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' },
-  
   themeToggleBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '5px', padding: '4px', userSelect: 'none' },
   settingsGearBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '12px', padding: '4px', userSelect: 'none' },
   smallLogoutBtn: { padding: '6px 12px', backgroundColor: '#f44336', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
@@ -556,19 +582,22 @@ const styles = {
   searchBoxWrapper: { padding: '12px' },
   searchInput: { width: '100%', padding: '12px', borderRadius: '8px', boxSizing: 'border-box', outline: 'none', fontSize: '14px' },
   userListContainer: { flex: 1, overflowY: 'auto' },
-  
-  // Custom alignment adjustments for Section Row Headers
   sectionHeaderRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px' },
   createChannelBtn: { border: 'none', background: 'none', color: '#0084ff', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' },
   hashtagAvatar: { width: '32px', height: '32px', borderRadius: '50%', display: 'flex', justifyContent: 'center', alignItems: 'center', fontWeight: 'bold', fontSize: '14px' },
-
   sectionLabel: { padding: '10px 15px', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' },
   userRow: { display: 'flex', alignItems: 'center', padding: '12px 15px', cursor: 'pointer', transition: 'background 0.2s' },
   userRowTextGroup: { display: 'flex', flexDirection: 'column', marginLeft: '12px', flex: 1, overflow: 'hidden' },
   userRowName: { fontWeight: '500' },
   userRowBioPreview: { fontSize: '12px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' },
   chatWindow: { flex: 1, display: 'flex', flexDirection: 'column', height: '100%' },
-  chatWindowHeader: { display: 'flex', alignItems: 'center', padding: '15px 20px' },
+  chatWindowHeader: { display: 'flex', alignItems: 'center', padding: '15px 20px', position: 'relative' },
+  
+  // NEW: Chat Message Action Header Alignment Configurations
+  msgSearchContainer: { position: 'relative', display: 'flex', alignItems: 'center' },
+  msgHeaderSearchField: { padding: '8px 30px 8px 12px', borderRadius: '18px', width: '200px', outline: 'none', fontSize: '13px', transition: 'width 0.3s' },
+  clearSearchXBtn: { position: 'absolute', right: '10px', border: 'none', background: 'none', color: '#aaa', cursor: 'pointer', fontSize: '11px' },
+
   messageStream: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' },
   messageRow: { display: 'flex', width: '100%', alignItems: 'center', position: 'relative', gap: '10px' },
   unsendActionBtn: { border: 'none', background: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: '600', padding: '4px 8px', borderRadius: '4px' },
@@ -577,7 +606,6 @@ const styles = {
   desktopInputField: { flex: 1, padding: '14px 18px', borderRadius: '24px', outline: 'none', fontSize: '15px' },
   desktopSendBtn: { marginLeft: '12px', padding: '12px 24px', backgroundColor: '#0084ff', color: '#fff', border: 'none', borderRadius: '24px', cursor: 'pointer', fontWeight: 'bold' },
   emptyStateContainer: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '20px' },
-
   modalOverlayFrame: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 },
   modalCard: { padding: '30px', borderRadius: '12px', width: '90%', maxWidth: '450px', boxShadow: '0 12px 36px rgba(0,0,0,0.15)', textAlign: 'center' },
   modalLabel: { display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '8px' },
