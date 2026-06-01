@@ -6,6 +6,19 @@ import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, upd
 // DEVELOPER DEFINITION
 const DEVELOPER_EMAIL = "matacarlitos2006@gmail.com";
 
+// NEW: Custom TikTok-style Cyan Verification Badge Component
+const TikTokBadge = () => (
+  <svg 
+    viewBox="0 0 24 24" 
+    style={{ width: '15px', height: '15px', minWidth: '15px', display: 'inline-block', verticalAlign: 'middle', marginLeft: '2px' }}
+  >
+    <path
+      fill="#25f4ee"
+      d="M12,2C6.5,2,2,6.5,2,12s4.5,10,10,10s10-4.5,10-10S17.5,2,12,2z M10.1,16.4l-4-4l1.4-1.4l2.6,2.6l6.6-6.6l1.4,1.4L10.1,16.4z"
+    />
+  </svg>
+);
+
 function App() {
   const [user, setUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -62,7 +75,6 @@ function App() {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        // Initial sync ensures fields exist without destroying existing custom data
         await setDoc(doc(db, 'users', currentUser.uid), {
           uid: currentUser.uid,
           email: currentUser.email,
@@ -74,12 +86,10 @@ function App() {
             const data = docSnap.data();
             if (data.bio) setMyBio(data.bio);
             
-            // Sync custom display names or fallback to Google account name
             const activeName = data.customName || currentUser.displayName;
             setSavedLocalName(activeName);
             setCustomDisplayName(activeName);
 
-            // Fallback tree for Avatar Picture (Custom URL -> Firestore fallback -> Google photoURL)
             const activeAvatar = data.customAvatarURL || data.photoURL || currentUser.photoURL;
             setSavedAvatarURL(activeAvatar);
             setCustomAvatarURL(data.customAvatarURL || '');
@@ -87,7 +97,7 @@ function App() {
             updateDoc(userDocRef, {
               displayName: activeName,
               searchName: activeName.toLowerCase(),
-              photoURL: data.photoURL || currentUser.photoURL // Safeguard standard field mapping
+              photoURL: data.photoURL || currentUser.photoURL 
             }).catch(err => console.error(err));
           }
         });
@@ -253,7 +263,7 @@ function App() {
       createdAt: new Date(),
       senderId: user.uid,
       senderName: savedLocalName,
-      senderEmail: user.email, // Added so individual messages track verification dynamically
+      senderEmail: user.email, 
       photoURL: savedAvatarURL 
     });
     setNewMessage('');
@@ -314,8 +324,8 @@ function App() {
               <div style={styles.profileText}>
                 <div style={{ fontWeight: 'bold', fontSize: '14px', color: theme.textMain, display: 'flex', alignItems: 'center', gap: '4px' }}>
                   {savedLocalName}
-                  {/* Sidebar Owner verification check */}
-                  {user.email === DEVELOPER_EMAIL && <span style={styles.verifiedBadge} title="Developer of the website">⚡ Verified Dev</span>}
+                  {/* NEW: Replaced badge text with TikTok style checkmark component */}
+                  {user.email === DEVELOPER_EMAIL && <TikTokBadge />}
                 </div>
                 <div style={{ fontSize: '11px', color: '#2ecc71', fontWeight: 'bold' }}>Online 🟢</div>
               </div>
@@ -365,7 +375,7 @@ function App() {
                     <div style={styles.userRowTextGroup}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
-                        {u.email === DEVELOPER_EMAIL && <span style={styles.blueCheck} title="Developer of the Website">🔵</span>}
+                        {u.email === DEVELOPER_EMAIL && <TikTokBadge />}
                       </div>
                       {u.bio && <span style={{ ...styles.userRowBioPreview, color: theme.textSub }}>"{u.bio}"</span>}
                     </div>
@@ -411,7 +421,7 @@ function App() {
                     <div style={styles.userRowTextGroup}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
-                        {u.email === DEVELOPER_EMAIL && <span style={styles.blueCheck} title="Developer of the Website">🔵</span>}
+                        {u.email === DEVELOPER_EMAIL && <TikTokBadge />}
                       </div>
                       {u.bio && <span style={{ ...styles.userRowBioPreview, color: theme.textSub }}>"{u.bio}"</span>}
                     </div>
@@ -435,14 +445,13 @@ function App() {
                     <img src={activeChat.customAvatarURL || activeChat.photoURL} alt="" style={styles.avatar} />
                   )}
                   <div style={{ marginLeft: '12px' }}>
-                    <div style={{ fontWeight: 'bold', color: theme.textMain, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ fontWeight: 'bold', color: theme.textMain, display: 'flex', alignItems: 'center', gap: '4px' }}>
                       {activeChat.isChannel ? activeChat.name : activeChat.displayName}
-                      {!activeChat.isChannel && activeChat.email === DEVELOPER_EMAIL && <span style={styles.blueCheck} title="Developer of the Website">🔵</span>}
+                      {!activeChat.isChannel && activeChat.email === DEVELOPER_EMAIL && <TikTokBadge />}
                     </div>
                     
-                    {/* Subtitle logic conditional on identity role */}
                     {!activeChat.isChannel && activeChat.email === DEVELOPER_EMAIL ? (
-                      <div style={{ fontSize: '12px', color: '#0084ff', fontWeight: 'bold', marginTop: '2px' }}>Developer of the Website 🛠️</div>
+                      <div style={{ fontSize: '12px', color: '#25f4ee', fontWeight: 'bold', marginTop: '2px' }}>Developer of the Website 🛠️</div>
                     ) : !activeChat.isChannel && activeChat.bio ? (
                       <div style={{ fontSize: '12px', color: theme.textSub, fontStyle: 'italic', marginTop: '2px' }}>"{activeChat.bio}"</div>
                     ) : null}
@@ -496,17 +505,17 @@ function App() {
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '60%' }}>
                           {/* Inside-group channel metadata rendering */}
                           {!isMe && (
-                            <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px', display: 'flex', alignItems: 'center', gap: '2px' }}>
                               {msg.senderName}
-                              {msg.senderEmail === DEVELOPER_EMAIL && <span style={styles.blueCheck} title="Developer of the Website">🔵</span>}
+                              {msg.senderEmail === DEVELOPER_EMAIL && <TikTokBadge />}
                             </span>
                           )}
                           
                           {/* Sender name marker for your own text rows in public room views */}
                           {activeChat.isChannel && isMe && (
-                            <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginRight: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              {msg.senderEmail === DEVELOPER_EMAIL && <span style={styles.blueCheck} title="Developer of the Website">🔵</span>}
+                            <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginRight: '4px', display: 'flex', alignItems: 'center', gap: '2px' }}>
                               {msg.senderName}
+                              {msg.senderEmail === DEVELOPER_EMAIL && <TikTokBadge />}
                             </span>
                           )}
 
@@ -637,8 +646,6 @@ const styles = {
   myProfileHeader: { display: 'flex', alignItems: 'center', padding: '15px 15px 5px 15px' },
   profileText: { marginLeft: '10px', flex: 1 },
   avatar: { width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' },
-  verifiedBadge: { backgroundColor: '#0084ff', color: '#ffffff', fontSize: '10px', fontWeight: 'bold', padding: '2px 6px', borderRadius: '10px', whiteSpace: 'nowrap' },
-  blueCheck: { fontSize: '13px', cursor: 'default', userSelect: 'none' },
   themeToggleBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '5px', padding: '4px', userSelect: 'none' },
   settingsGearBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '12px', padding: '4px', userSelect: 'none' },
   smallLogoutBtn: { padding: '6px 12px', backgroundColor: '#f44336', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
