@@ -351,7 +351,7 @@ function App() {
           ) : (
             <div style={{ ...styles.emptyStateContainer, backgroundColor: theme.bgOuter }}>
               <h3 style={{ color: theme.textMain }}>Your Private Chat</h3>
-              <p style={{ color: theme.textSub }}>Select your girlfriend's contact from history log or use search bar to start messaging.</p>
+              <p style={{ color: theme.textSub }}>Search for a user or select a profile from your recent conversations to start messaging.</p>
             </div>
           )}
         </div>
