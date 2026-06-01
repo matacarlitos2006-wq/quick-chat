@@ -83,6 +83,14 @@ function App() {
            cleanUrl.endsWith('.webp');
   };
 
+  // Ask for desktop notification permissions immediately upon user authorization
+  useEffect(() => {
+    if (user && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, [user]);
+
+  // Presence System
   useEffect(() => {
     if (!user) return;
     updateUserPresence('online');
@@ -114,22 +122,46 @@ function App() {
     };
   }, [user]);
 
+  // Combined Sound and Native OS Banner Notification engine
   useEffect(() => {
     if (messages.length === 0) {
       prevMessagesCountRef.current = 0;
       return;
     }
+
     if (prevMessagesCountRef.current > 0 && messages.length > prevMessagesCountRef.current) {
       const lastMessage = messages[messages.length - 1];
+      
       if (lastMessage.senderId === user?.uid) {
+        // Sound for sent message
         new Audio(SOUND_SEND).play().catch(e => console.log(e));
       } else {
+        // Sound for received message
         new Audio(SOUND_RECEIVE).play().catch(e => console.log(e));
+
+        // NEW: Trigger Desktop Notification banner if the tab is blurred/minimized
+        if (document.hidden && Notification.permission === 'granted') {
+          const notificationTitle = `Message from ${lastMessage.senderName}`;
+          const notificationBody = isImageURL(lastMessage.text) ? "🖼️ Sent an image attachment" : lastMessage.text;
+
+          const notification = new Notification(notificationTitle, {
+            body: notificationBody,
+            icon: lastMessage.photoURL || "/favicon.ico", // Displays sender avatar inside native banner
+            tag: lastMessage.chatRoomId // Prevents stacking duplicate notifications from the same room
+          });
+
+          // Focus window instantly when clicking the macOS banner notification
+          notification.onclick = () => {
+            window.focus();
+            notification.close();
+          };
+        }
       }
     }
     prevMessagesCountRef.current = messages.length;
   }, [messages, user]);
 
+  // 1. Auth Listener + Sync Profile Info
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -166,6 +198,7 @@ function App() {
     return () => unsubscribe();
   }, []);
 
+  // 2. Stream Global Public Channels from Firestore
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, 'channels'), orderBy('createdAt', 'desc'));
@@ -179,6 +212,7 @@ function App() {
     return () => unsubscribe();
   }, [user]);
 
+  // 3. Load Recent Private DMs
   useEffect(() => {
     if (user) {
       const savedChats = localStorage.getItem(`recents_${user.uid}`);
@@ -198,6 +232,7 @@ function App() {
     }
   }, [user, activeChat]);
 
+  // 4. Live Search Users
   useEffect(() => {
     if (!searchQuery.trim() || !user) {
       setSearchResults([]);
@@ -219,6 +254,7 @@ function App() {
     return () => unsubscribe();
   }, [searchQuery, user]);
 
+  // 5. Live Message Stream Channel
   useEffect(() => {
     if (!user || !activeChat) {
       setMessages([]);
@@ -637,7 +673,6 @@ function App() {
                           <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 1, flexShrink: 0 }} />
                         )}
 
-                        {/* Crucial Fix: added minWidth: 0 to force flex child to respect wrapping */}
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '70%', minWidth: 0, order: 2, position: 'relative' }}>
                           {!isMe && (
                             <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px', display: 'flex', alignItems: 'center', gap: '2px' }}>
@@ -798,9 +833,7 @@ const styles = {
   loginContainer: { display: 'flex', height: '100vh', width: '100vw', justifyContent: 'center', alignItems: 'center', fontFamily: 'sans-serif' },
   loginCard: { padding: '50px', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.08)', textAlign: 'center', maxWidth: '400px' },
   loginButton: { padding: '14px 28px', backgroundColor: '#4285F4', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '16px', cursor: 'pointer', fontWeight: 'bold', marginTop: '20px' },
-  // 100vw and 100vh forces layout container frame borders to snap directly edge-to-edge
   desktopWrapper: { display: 'flex', width: '100vw', height: '100vh', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-  // FIX: Removed maxWidth '1200px' block constraints -> Expanded to full 100% monitor viewport coverage
   desktopAppContainer: { display: 'flex', width: '100%', height: '100%', overflow: 'hidden', position: 'relative' },
   sidebar: { width: '320px', minWidth: '320px', display: 'flex', flexDirection: 'column', flexShrink: 0 },
   myProfileHeaderContainer: { display: 'flex', flexDirection: 'column' },
@@ -833,7 +866,6 @@ const styles = {
   messageRow: { display: 'flex', width: '100%', alignItems: 'center', position: 'relative', gap: '10px' },
   reactionTriggerBtn: { border: 'none', background: 'none', fontSize: '14px', cursor: 'pointer', padding: '4px' },
   unsendActionBtn: { border: 'none', background: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: '600', padding: '4px 8px', borderRadius: '4px' },
-  // FIX: Added line wrapping attributes to text bubbles to break down extreme URLs cleanly
   msgBubble: { padding: '12px 16px', borderRadius: '18px', fontSize: '15px', lineHeight: '1.4', boxSizing: 'border-box', wordBreak: 'break-word', whiteSpace: 'pre-wrap' },
   renderedMediaMessage: { maxWidth: '100%', maxHeight: '280px', borderRadius: '12px', display: 'block', objectFit: 'cover', marginTop: '2px', cursor: 'pointer' },
   emojiPickerPopover: { position: 'absolute', display: 'flex', gap: '8px', padding: '6px 10px', borderRadius: '20px', top: '-35px', left: '50%', transform: 'translateX(-50%)', zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' },
