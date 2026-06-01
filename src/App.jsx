@@ -7,8 +7,12 @@ function App() {
   const [user, setUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
-  const [activeChatUser, setActiveChatUser] = useState(null);
+  
+  // Active Chat State can now be a user profile OR a group channel structure
+  const [activeChat, setActiveChat] = useState(null); 
+  
   const [recentChats, setRecentChats] = useState([]);
+  const [channels, setChannels] = useState([]); // NEW: List of public group channels
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   
@@ -19,10 +23,14 @@ function App() {
   // Message Actions
   const [hoveredMessageId, setHoveredMessageId] = useState(null);
 
-  // NEW: Settings Modal States
+  // Settings Modal States
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [customDisplayName, setCustomDisplayName] = useState('');
   const [savedLocalName, setSavedLocalName] = useState('');
+
+  // NEW: Group Channel Creation Modal State
+  const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
+  const [newChannelName, setNewChannelName] = useState('');
 
   // Dark Mode State
   const [darkMode, setDarkMode] = useState(() => {
@@ -40,31 +48,27 @@ function App() {
     });
   };
 
-  // 1. Auth Listener + Sync Profile Info (Listens for custom local names)
+  // 1. Auth Listener + Sync Profile Info
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        // Build initial document structure safely
         await setDoc(doc(db, 'users', currentUser.uid), {
           uid: currentUser.uid,
           email: currentUser.email,
           photoURL: currentUser.photoURL,
         }, { merge: true });
 
-        // Stream real-time profile customizations (Bio & Custom Name)
         const userDocRef = doc(db, 'users', currentUser.uid);
         const unsubDoc = onSnapshot(userDocRef, (docSnap) => {
           if (docSnap.exists()) {
             const data = docSnap.data();
             if (data.bio) setMyBio(data.bio);
             
-            // Set name to custom app name if it exists, otherwise fall back to Google profile name
             const activeName = data.customName || currentUser.displayName;
             setSavedLocalName(activeName);
             setCustomDisplayName(activeName);
 
-            // Backfill search values based on their active custom display identity
             updateDoc(userDocRef, {
               displayName: activeName,
               searchName: activeName.toLowerCase()
@@ -77,7 +81,21 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Load Recent Chats
+  // NEW: 2. Stream Global Public Channels from Firestore
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'channels'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const channelsList = [];
+      snapshot.forEach((doc) => {
+        channelsList.push({ id: doc.id, ...doc.data() });
+      });
+      setChannels(channelsList);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  // 3. Load Recent Private DMs
   useEffect(() => {
     if (user) {
       const savedChats = localStorage.getItem(`recents_${user.uid}`);
@@ -95,9 +113,9 @@ function App() {
         }
       }
     }
-  }, [user, activeChatUser]);
+  }, [user, activeChat]);
 
-  // 3. Live Search Users
+  // 4. Live Search Users
   useEffect(() => {
     if (!searchQuery.trim() || !user) {
       setSearchResults([]);
@@ -119,13 +137,17 @@ function App() {
     return () => unsubscribe();
   }, [searchQuery, user]);
 
-  // 4. Live Message Stream Channel
+  // 5. Live Message Stream Channel (Handles both DMs and Group Channels)
   useEffect(() => {
-    if (!user || !activeChatUser) {
+    if (!user || !activeChat) {
       setMessages([]);
       return;
     }
-    const roomId = [user.uid, activeChatUser.uid].sort().join('_');
+
+    // Determine if target chat is a public channel or a private user DM room
+    const isChannel = activeChat.isChannel;
+    const roomId = isChannel ? activeChat.id : [user.uid, activeChat.uid].sort().join('_');
+
     const q = query(
       collection(db, 'messages'),
       where('chatRoomId', '==', roomId),
@@ -139,15 +161,25 @@ function App() {
       setMessages(msgs);
     });
 
+    // Cache to recent history block ONLY if it's a private 1-on-1 text conversation
+    if (!isChannel) {
+      setRecentChats((prev) => {
+        const filtered = prev.filter((u) => u.uid !== activeChat.uid);
+        const updated = [activeChat, ...filtered];
+        localStorage.setItem(`recents_${user.uid}`, JSON.stringify(updated));
+        return updated;
+      });
+    }
+
     return () => unsubscribe();
-  }, [activeChatUser, user]);
+  }, [activeChat, user]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const handleLogin = () => signInWithPopup(auth, googleProvider).catch(err => console.error(err));
-  const handleLogout = () => { signOut(auth); setActiveChatUser(null); setIsSettingsOpen(false); };
+  const handleLogout = () => { signOut(auth); setActiveChat(null); setIsSettingsOpen(false); };
 
   const handleSaveBio = async () => {
     if (!user) return;
@@ -159,11 +191,9 @@ function App() {
     }
   };
 
-  // NEW: Save Custom Application Profile Display Name
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     if (!customDisplayName.trim() || !user) return;
-
     try {
       await updateDoc(doc(db, 'users', user.uid), {
         customName: customDisplayName.trim(),
@@ -172,14 +202,37 @@ function App() {
       });
       setIsSettingsOpen(false);
     } catch (err) {
-      console.error("Failed to update profile configurations: ", err);
+      console.error(err);
+    }
+  };
+
+  // NEW: Create Group Channel Database Trigger
+  const handleCreateChannel = async (e) => {
+    e.preventDefault();
+    if (!newChannelName.trim()) return;
+
+    // Standardize channel formatting (e.g., #general-chat)
+    const formattedName = newChannelName.trim().toLowerCase().replace(/\s+/g, '-');
+
+    try {
+      await addDoc(collection(db, 'channels'), {
+        name: formattedName,
+        createdAt: new Date(),
+        createdBy: user.uid
+      });
+      setNewChannelName('');
+      setIsCreateChannelOpen(false);
+    } catch (err) {
+      console.error("Error creating room: ", err);
     }
   };
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (newMessage.trim() === '' || !activeChatUser) return;
-    const roomId = [user.uid, activeChatUser.uid].sort().join('_');
+    if (newMessage.trim() === '' || !activeChat) return;
+    
+    const isChannel = activeChat.isChannel;
+    const roomId = isChannel ? activeChat.id : [user.uid, activeChat.uid].sort().join('_');
 
     await addDoc(collection(db, 'messages'), {
       chatRoomId: roomId,
@@ -244,13 +297,8 @@ function App() {
                 <div style={{ fontWeight: 'bold', fontSize: '14px', color: theme.textMain }}>{savedLocalName}</div>
                 <div style={{ fontSize: '11px', color: '#2ecc71', fontWeight: 'bold' }}>Online 🟢</div>
               </div>
-              
-              {/* Theme Selector Toggle */}
               <button onClick={toggleDarkMode} style={styles.themeToggleBtn}>{darkMode ? '☀️' : '🌙'}</button>
-              
-              {/* NEW: Settings Gear Button */}
               <button onClick={() => setIsSettingsOpen(true)} style={styles.settingsGearBtn} title="Account Settings">⚙️</button>
-              
               <button onClick={handleLogout} style={styles.smallLogoutBtn}>Exit</button>
             </div>
             
@@ -290,7 +338,7 @@ function App() {
               <>
                 <div style={{ ...styles.sectionLabel, color: theme.textSub }}>Search Results</div>
                 {searchResults.map((u) => (
-                  <div key={u.uid} onClick={() => { setActiveChatUser(u); setSearchQuery(''); }} style={styles.userRow}>
+                  <div key={u.uid} onClick={() => { setActiveChat(u); setSearchQuery(''); }} style={styles.userRow}>
                     <img src={u.photoURL} alt="" style={styles.avatar} />
                     <div style={styles.userRowTextGroup}>
                       <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
@@ -301,17 +349,37 @@ function App() {
               </>
             ) : (
               <>
-                <div style={{ ...styles.sectionLabel, color: theme.textSub }}>Recent Conversations</div>
+                {/* NEW: GROUP CHANNELS SUBSECTION MENU BLOCK */}
+                <div style={styles.sectionHeaderRow}>
+                  <div style={{ ...styles.sectionLabel, color: theme.textSub, padding: 0 }}>Group Channels</div>
+                  <button onClick={() => setIsCreateChannelOpen(true)} style={styles.createChannelBtn} title="Create Group Room">Create Room ➕</button>
+                </div>
+                
+                {channels.map((chan) => (
+                  <div
+                    key={chan.id}
+                    onClick={() => setActiveChat({ ...chan, isChannel: true })}
+                    style={{
+                      ...styles.userRow,
+                      backgroundColor: (activeChat?.isChannel && activeChat?.id === chan.id) ? theme.rowHoverActive : 'transparent'
+                    }}
+                  >
+                    <div style={{ ...styles.hashtagAvatar, backgroundColor: theme.bgInput, color: theme.textMain }}>#</div>
+                    <div style={styles.userRowTextGroup}>
+                      <span style={{ ...styles.userRowName, color: theme.textMain, fontWeight: '600' }}>{chan.name}</span>
+                    </div>
+                  </div>
+                ))}
+
+                {/* PRIVATE DIRECT MESSAGES SUBSECTION */}
+                <div style={{ ...styles.sectionLabel, color: theme.textSub, marginTop: '15px' }}>Direct Messages</div>
                 {recentChats.map((u) => (
                   <div
                     key={u.uid}
-                    onClick={() => {
-                      // Dynamically pull latest profile settings upon selection activation
-                      setActiveChatUser(u);
-                    }}
+                    onClick={() => setActiveChat(u)}
                     style={{
                       ...styles.userRow,
-                      backgroundColor: activeChatUser?.uid === u.uid ? theme.rowHoverActive : 'transparent'
+                      backgroundColor: (!activeChat?.isChannel && activeChat?.uid === u.uid) ? theme.rowHoverActive : 'transparent'
                     }}
                   >
                     <img src={u.photoURL} alt="" style={styles.avatar} />
@@ -328,13 +396,24 @@ function App() {
 
         {/* CHAT WINDOW */}
         <div style={{ ...styles.chatWindow, backgroundColor: theme.bgContainer }}>
-          {activeChatUser ? (
+          {activeChat ? (
             <>
               <div style={{ ...styles.chatWindowHeader, backgroundColor: theme.bgHeader, borderBottom: `1px solid ${theme.border}` }}>
-                <img src={activeChatUser.photoURL} alt="" style={styles.avatar} />
+                {activeChat.isChannel ? (
+                  <div style={{ ...styles.hashtagAvatar, backgroundColor: theme.bgInput, color: theme.textMain, width: '40px', height: '40px', fontSize: '18px' }}>#</div>
+                ) : (
+                  <img src={activeChat.photoURL} alt="" style={styles.avatar} />
+                )}
                 <div style={{ marginLeft: '12px' }}>
-                  <div style={{ fontWeight: 'bold', color: theme.textMain }}>{activeChatUser.displayName}</div>
-                  {activeChatUser.bio && <div style={{ fontSize: '12px', color: theme.textSub, fontStyle: 'italic', marginTop: '2px' }}>"{activeChatUser.bio}"</div>}
+                  <div style={{ fontWeight: 'bold', color: theme.textMain }}>
+                    {activeChat.isChannel ? activeChat.name : activeChat.displayName}
+                  </div>
+                  {!activeChat.isChannel && activeChat.bio && (
+                    <div style={{ fontSize: '12px', color: theme.textSub, fontStyle: 'italic', marginTop: '2px' }}>"{activeChat.bio}"</div>
+                  )}
+                  {activeChat.isChannel && (
+                    <div style={{ fontSize: '11px', color: theme.textSub, marginTop: '2px' }}>Public Room</div>
+                  )}
                 </div>
               </div>
 
@@ -357,12 +436,21 @@ function App() {
                         </button>
                       )}
 
-                      <div style={{
-                        ...styles.msgBubble,
-                        backgroundColor: isMe ? theme.bgBubbleMe : theme.bgBubbleThem,
-                        color: isMe ? '#ffffff' : theme.textMain,
-                      }}>
-                        {msg.text}
+                      {/* Display name tag above bubble inside global group rooms */}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '60%' }}>
+                        {activeChat.isChannel && !isMe && (
+                          <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px' }}>
+                            {msg.senderName}
+                          </span>
+                        )}
+                        <div style={{
+                          ...styles.msgBubble,
+                          backgroundColor: isMe ? theme.bgBubbleMe : theme.bgBubbleThem,
+                          color: isMe ? '#ffffff' : theme.textMain,
+                          maxWidth: '100%'
+                        }}>
+                          {msg.text}
+                        </div>
                       </div>
                     </div>
                   );
@@ -373,7 +461,7 @@ function App() {
               <form onSubmit={handleSendMessage} style={{ ...styles.messageInputForm, backgroundColor: theme.bgHeader, borderTop: `1px solid ${theme.border}` }}>
                 <input
                   type="text"
-                  placeholder={`Message ${activeChatUser.displayName}...`}
+                  placeholder={activeChat.isChannel ? `Message ${activeChat.name}...` : `Message ${activeChat.displayName}...`}
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                   style={{ ...styles.desktopInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
@@ -391,12 +479,11 @@ function App() {
 
       </div>
 
-      {/* NEW: SETTINGS MODAL INTERFACE SLIDE OVERLAY */}
+      {/* ACCOUNT PREFERENCES SETTINGS MODAL */}
       {isSettingsOpen && (
         <div style={{ ...styles.modalOverlayFrame, backgroundColor: theme.modalOverlay }}>
           <div style={{ ...styles.modalCard, backgroundColor: theme.bgContainer, border: `1px solid ${theme.border}` }}>
             <h3 style={{ color: theme.textMain, marginTop: 0, marginBottom: '15px' }}>⚙️ App Preferences</h3>
-            
             <form onSubmit={handleSaveSettings}>
               <div style={{ marginBottom: '20px', textAlign: 'left' }}>
                 <label style={{ ...styles.modalLabel, color: theme.textSub }}>Custom Display Name</label>
@@ -404,18 +491,39 @@ function App() {
                   type="text" 
                   value={customDisplayName}
                   onChange={(e) => setCustomDisplayName(e.target.value)}
-                  placeholder="Enter custom nickname..."
                   maxLength={25}
                   style={{ ...styles.modalInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
                 />
-                <span style={{ fontSize: '11px', color: theme.textSub, display: 'block', marginTop: '5px' }}>
-                  This edits your handle inside QuickChat without modifying your actual Google account credentials.
-                </span>
               </div>
-
               <div style={styles.modalActionsRow}>
                 <button type="button" onClick={() => setIsSettingsOpen(false)} style={styles.modalCancelBtn}>Cancel</button>
                 <button type="submit" style={styles.modalSaveBtn}>Save Profiles</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* NEW: CREATE CHANNEL POPUP MODAL */}
+      {isCreateChannelOpen && (
+        <div style={{ ...styles.modalOverlayFrame, backgroundColor: theme.modalOverlay }}>
+          <div style={{ ...styles.modalCard, backgroundColor: theme.bgContainer, border: `1px solid ${theme.border}` }}>
+            <h3 style={{ color: theme.textMain, marginTop: 0, marginBottom: '15px' }}>➕ Create Public Channel</h3>
+            <form onSubmit={handleCreateChannel}>
+              <div style={{ marginBottom: '20px', textAlign: 'left' }}>
+                <label style={{ ...styles.modalLabel, color: theme.textSub }}>Channel Name</label>
+                <input 
+                  type="text" 
+                  value={newChannelName}
+                  onChange={(e) => setNewChannelName(e.target.value)}
+                  placeholder="e.g. general-chat, plans, gaming"
+                  maxLength={20}
+                  style={{ ...styles.modalInputField, backgroundColor: theme.bgInput, color: theme.textMain, border: `1px solid ${theme.border}` }}
+                />
+              </div>
+              <div style={styles.modalActionsRow}>
+                <button type="button" onClick={() => setIsCreateChannelOpen(false)} style={styles.modalCancelBtn}>Cancel</button>
+                <button type="submit" style={styles.modalSaveBtn}>Create Room</button>
               </div>
             </form>
           </div>
@@ -439,9 +547,7 @@ const styles = {
   avatar: { width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' },
   
   themeToggleBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '5px', padding: '4px', userSelect: 'none' },
-  // Custom alignment options for settings triggers
   settingsGearBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '12px', padding: '4px', userSelect: 'none' },
-  
   smallLogoutBtn: { padding: '6px 12px', backgroundColor: '#f44336', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   bioWidgetWrapper: { padding: '0px 15px 12px 15px' },
   bioStatusTextDisplay: { fontSize: '13px', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' },
@@ -450,6 +556,12 @@ const styles = {
   searchBoxWrapper: { padding: '12px' },
   searchInput: { width: '100%', padding: '12px', borderRadius: '8px', boxSizing: 'border-box', outline: 'none', fontSize: '14px' },
   userListContainer: { flex: 1, overflowY: 'auto' },
+  
+  // Custom alignment adjustments for Section Row Headers
+  sectionHeaderRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px' },
+  createChannelBtn: { border: 'none', background: 'none', color: '#0084ff', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' },
+  hashtagAvatar: { width: '32px', height: '32px', borderRadius: '50%', display: 'flex', justifyContent: 'center', alignItems: 'center', fontWeight: 'bold', fontSize: '14px' },
+
   sectionLabel: { padding: '10px 15px', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' },
   userRow: { display: 'flex', alignItems: 'center', padding: '12px 15px', cursor: 'pointer', transition: 'background 0.2s' },
   userRowTextGroup: { display: 'flex', flexDirection: 'column', marginLeft: '12px', flex: 1, overflow: 'hidden' },
@@ -466,7 +578,6 @@ const styles = {
   desktopSendBtn: { marginLeft: '12px', padding: '12px 24px', backgroundColor: '#0084ff', color: '#fff', border: 'none', borderRadius: '24px', cursor: 'pointer', fontWeight: 'bold' },
   emptyStateContainer: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '20px' },
 
-  // NEW: Settings Modal Styling Blueprint Blocks
   modalOverlayFrame: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 },
   modalCard: { padding: '30px', borderRadius: '12px', width: '90%', maxWidth: '450px', boxShadow: '0 12px 36px rgba(0,0,0,0.15)', textAlign: 'center' },
   modalLabel: { display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '8px' },
