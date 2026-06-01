@@ -3,6 +3,9 @@ import { auth, googleProvider, db } from './firebase';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { doc, setDoc, collection, addDoc, query, orderBy, onSnapshot, where, updateDoc, deleteDoc } from 'firebase/firestore';
 
+// DEVELOPER DEFINITION
+const DEVELOPER_EMAIL = "matacarlitos2006@gmail.com";
+
 function App() {
   const [user, setUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -30,7 +33,7 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [customDisplayName, setCustomDisplayName] = useState('');
   const [savedLocalName, setSavedLocalName] = useState('');
-  // NEW: Custom Local Profile Picture States
+  // Custom Local Profile Picture States
   const [customAvatarURL, setCustomAvatarURL] = useState('');
   const [savedAvatarURL, setSavedAvatarURL] = useState('');
 
@@ -76,7 +79,7 @@ function App() {
             setSavedLocalName(activeName);
             setCustomDisplayName(activeName);
 
-            // NEW: Fallback tree for Avatar Picture (Custom URL -> Firestore fallback -> Google photoURL)
+            // Fallback tree for Avatar Picture (Custom URL -> Firestore fallback -> Google photoURL)
             const activeAvatar = data.customAvatarURL || data.photoURL || currentUser.photoURL;
             setSavedAvatarURL(activeAvatar);
             setCustomAvatarURL(data.customAvatarURL || '');
@@ -204,7 +207,6 @@ function App() {
     }
   };
 
-  // UPDATED: Process both custom display name AND custom profile picture input
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     if (!customDisplayName.trim() || !user) return;
@@ -213,7 +215,7 @@ function App() {
         customName: customDisplayName.trim(),
         displayName: customDisplayName.trim(),
         searchName: customDisplayName.trim().toLowerCase(),
-        customAvatarURL: customAvatarURL.trim() // Write custom image string directly to document schema
+        customAvatarURL: customAvatarURL.trim() 
       });
       setIsSettingsOpen(false);
     } catch (err) {
@@ -251,7 +253,8 @@ function App() {
       createdAt: new Date(),
       senderId: user.uid,
       senderName: savedLocalName,
-      photoURL: savedAvatarURL // Uses active calculated profile asset variable string
+      senderEmail: user.email, // Added so individual messages track verification dynamically
+      photoURL: savedAvatarURL 
     });
     setNewMessage('');
   };
@@ -307,10 +310,13 @@ function App() {
         <div style={{ ...styles.sidebar, backgroundColor: theme.bgSidebar, borderRight: `1px solid ${theme.border}` }}>
           <div style={{ ...styles.myProfileHeaderContainer, backgroundColor: theme.bgContainer, borderBottom: `1px solid ${theme.border}` }}>
             <div style={styles.myProfileHeader}>
-              {/* UPDATED: Source mapped to savedAvatarURL tracking active local state updates */}
               <img src={savedAvatarURL} alt="" style={styles.avatar} />
               <div style={styles.profileText}>
-                <div style={{ fontWeight: 'bold', fontSize: '14px', color: theme.textMain }}>{savedLocalName}</div>
+                <div style={{ fontWeight: 'bold', fontSize: '14px', color: theme.textMain, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  {savedLocalName}
+                  {/* Sidebar Owner verification check */}
+                  {user.email === DEVELOPER_EMAIL && <span style={styles.verifiedBadge} title="Developer of the website">⚡ Verified Dev</span>}
+                </div>
                 <div style={{ fontSize: '11px', color: '#2ecc71', fontWeight: 'bold' }}>Online 🟢</div>
               </div>
               <button onClick={toggleDarkMode} style={styles.themeToggleBtn}>{darkMode ? '☀️' : '🌙'}</button>
@@ -357,7 +363,10 @@ function App() {
                   <div key={u.uid} onClick={() => { setActiveChat(u); setSearchQuery(''); }} style={styles.userRow}>
                     <img src={u.customAvatarURL || u.photoURL} alt="" style={styles.avatar} />
                     <div style={styles.userRowTextGroup}>
-                      <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
+                        {u.email === DEVELOPER_EMAIL && <span style={styles.blueCheck} title="Developer of the Website">🔵</span>}
+                      </div>
                       {u.bio && <span style={{ ...styles.userRowBioPreview, color: theme.textSub }}>"{u.bio}"</span>}
                     </div>
                   </div>
@@ -400,7 +409,10 @@ function App() {
                   >
                     <img src={u.customAvatarURL || u.photoURL} alt="" style={styles.avatar} />
                     <div style={styles.userRowTextGroup}>
-                      <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ ...styles.userRowName, color: theme.textMain }}>{u.displayName}</span>
+                        {u.email === DEVELOPER_EMAIL && <span style={styles.blueCheck} title="Developer of the Website">🔵</span>}
+                      </div>
                       {u.bio && <span style={{ ...styles.userRowBioPreview, color: theme.textSub }}>"{u.bio}"</span>}
                     </div>
                   </div>
@@ -423,19 +435,25 @@ function App() {
                     <img src={activeChat.customAvatarURL || activeChat.photoURL} alt="" style={styles.avatar} />
                   )}
                   <div style={{ marginLeft: '12px' }}>
-                    <div style={{ fontWeight: 'bold', color: theme.textMain }}>
+                    <div style={{ fontWeight: 'bold', color: theme.textMain, display: 'flex', alignItems: 'center', gap: '6px' }}>
                       {activeChat.isChannel ? activeChat.name : activeChat.displayName}
+                      {!activeChat.isChannel && activeChat.email === DEVELOPER_EMAIL && <span style={styles.blueCheck} title="Developer of the Website">🔵</span>}
                     </div>
-                    {!activeChat.isChannel && activeChat.bio && (
+                    
+                    {/* Subtitle logic conditional on identity role */}
+                    {!activeChat.isChannel && activeChat.email === DEVELOPER_EMAIL ? (
+                      <div style={{ fontSize: '12px', color: '#0084ff', fontWeight: 'bold', marginTop: '2px' }}>Developer of the Website 🛠️</div>
+                    ) : !activeChat.isChannel && activeChat.bio ? (
                       <div style={{ fontSize: '12px', color: theme.textSub, fontStyle: 'italic', marginTop: '2px' }}>"{activeChat.bio}"</div>
-                    )}
+                    ) : null}
+
                     {activeChat.isChannel && (
                       <div style={{ fontSize: '11px', color: theme.textSub, marginTop: '2px' }}>Public Room</div>
                     )}
                   </div>
                 </div>
 
-                {/* Text Message Stream Sub-Search Input Form Field */}
+                {/* Inside-Chat Stream Filter Text Box */}
                 <div style={styles.msgSearchContainer}>
                   <input 
                     type="text"
@@ -471,17 +489,27 @@ function App() {
                           </button>
                         )}
 
-                        {/* Rendering corresponding message avatars dynamically based on sender */}
                         {!isMe && (
                           <img src={msg.photoURL} alt="" style={{ ...styles.avatar, width: '28px', height: '28px', order: 0 }} />
                         )}
 
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '60%' }}>
-                          {activeChat.isChannel && !isMe && (
-                            <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px' }}>
+                          {/* Inside-group channel metadata rendering */}
+                          {!isMe && (
+                            <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginLeft: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              {msg.senderName}
+                              {msg.senderEmail === DEVELOPER_EMAIL && <span style={styles.blueCheck} title="Developer of the Website">🔵</span>}
+                            </span>
+                          )}
+                          
+                          {/* Sender name marker for your own text rows in public room views */}
+                          {activeChat.isChannel && isMe && (
+                            <span style={{ fontSize: '11px', color: theme.textSub, marginBottom: '2px', marginRight: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              {msg.senderEmail === DEVELOPER_EMAIL && <span style={styles.blueCheck} title="Developer of the Website">🔵</span>}
                               {msg.senderName}
                             </span>
                           )}
+
                           <div style={{
                             ...styles.msgBubble,
                             backgroundColor: isMe ? theme.bgBubbleMe : theme.bgBubbleThem,
@@ -545,7 +573,6 @@ function App() {
                 />
               </div>
 
-              {/* NEW: Input Form Field targeting image links for website profile display isolation */}
               <div style={{ marginBottom: '20px', textAlign: 'left' }}>
                 <label style={{ ...styles.modalLabel, color: theme.textSub }}>Custom Profile Picture URL</label>
                 <input 
@@ -610,6 +637,8 @@ const styles = {
   myProfileHeader: { display: 'flex', alignItems: 'center', padding: '15px 15px 5px 15px' },
   profileText: { marginLeft: '10px', flex: 1 },
   avatar: { width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' },
+  verifiedBadge: { backgroundColor: '#0084ff', color: '#ffffff', fontSize: '10px', fontWeight: 'bold', padding: '2px 6px', borderRadius: '10px', whiteSpace: 'nowrap' },
+  blueCheck: { fontSize: '13px', cursor: 'default', userSelect: 'none' },
   themeToggleBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '5px', padding: '4px', userSelect: 'none' },
   settingsGearBtn: { border: 'none', background: 'none', fontSize: '18px', cursor: 'pointer', marginRight: '12px', padding: '4px', userSelect: 'none' },
   smallLogoutBtn: { padding: '6px 12px', backgroundColor: '#f44336', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
